@@ -77,11 +77,13 @@ import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
 import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
+import io.github.mappledm.vibenotes.data.UpdateState
 import io.github.mappledm.vibenotes.ui.components.ReminderOptions
 import io.github.mappledm.vibenotes.ui.components.Selector
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.components.reminderLabel
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
+import io.github.mappledm.vibenotes.ui.update.UpdatePanel
 
 /** Settings are grouped like a phone's settings app: a short list, details one tap away. */
 enum class SettingsSection(val id: String, val title: String, val icon: ImageVector) {
@@ -151,7 +153,7 @@ fun SettingsScreen(
                         SettingsSection.STORAGE -> StorageSection(vm, settings, onOpenNote)
                         SettingsSection.PRIVACY -> PrivacySection(vm, onOpenNote)
                         SettingsSection.APPEARANCE -> AppearanceSection(vm, settings)
-                        SettingsSection.ABOUT -> AboutSection(vm)
+                        SettingsSection.ABOUT -> AboutSection(vm, settings)
                     }
                     Spacer(Modifier.height(24.dp))
                 }
@@ -164,6 +166,7 @@ fun SettingsScreen(
 private fun SettingsHome(vm: SettingsViewModel, settings: AppSettings, onOpen: (String) -> Unit) {
     val hasKey by vm.hasKey.collectAsStateWithLifecycle()
     val calendars by vm.calendars.collectAsStateWithLifecycle()
+    val update by vm.update.collectAsStateWithLifecycle()
     SettingsSection.entries.forEach { section ->
         val summary = when (section) {
             SettingsSection.AI -> if (hasKey) "${providerName(settings.baseUrl)} · ${settings.model}" else "Не подключён — сообщения сохраняются во «Входящие»"
@@ -174,7 +177,11 @@ private fun SettingsHome(vm: SettingsViewModel, settings: AppSettings, onOpen: (
             SettingsSection.STORAGE -> vm.vaultName
             SettingsSection.PRIVACY -> ".aiignore и что уходит в AI"
             SettingsSection.APPEARANCE -> paletteLabel(settings.palette) + " · " + themeLabel(settings.theme)
-            SettingsSection.ABOUT -> "Версия ${vm.appVersion} · GPL-3.0"
+            SettingsSection.ABOUT -> when (val u = update) {
+                is UpdateState.Available -> "Доступна версия ${u.release.versionName}"
+                is UpdateState.Downloading, is UpdateState.Ready -> "Обновление загружается"
+                else -> "Версия ${vm.appVersion} · обновления"
+            }
         }
         Row(
             Modifier
@@ -409,9 +416,17 @@ private fun assistantSummary(settings: AppSettings): String {
 }
 
 @Composable
-private fun AboutSection(vm: SettingsViewModel) {
+private fun AboutSection(vm: SettingsViewModel, settings: AppSettings) {
     val uriHandler = LocalUriHandler.current
-    Text("VibeNotes ${vm.appVersion}", style = MaterialTheme.typography.titleMedium)
+    Group("Обновления")
+    UpdatePanel()
+    SwitchRow(
+        "Проверять автоматически",
+        "Раз в 12 часов приложение скачивает с GitHub маленький файл с номером последней версии. О вас ничего не отправляется. Устанавливается обновление только после вашего подтверждения.",
+        settings.autoUpdateCheck,
+        vm::setAutoUpdateCheck,
+    )
+    Group("VibeNotes")
     Hint("Свободное ПО (GPL-3.0). Без аккаунтов, серверов и телеметрии. Данные — обычные файлы в вашей папке.")
     TextButton(onClick = { runCatching { uriHandler.openUri("https://github.com/MAppleDm/VibeNotes") } }) { Text("Исходный код на GitHub") }
 }

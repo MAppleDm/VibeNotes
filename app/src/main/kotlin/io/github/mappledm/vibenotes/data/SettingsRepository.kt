@@ -54,6 +54,11 @@ data class AppSettings(
     val autoApply: Set<String>,
     val useInstructions: Boolean,
     val instructionsFile: String,
+    // --- updates from GitHub ---
+    val autoUpdateCheck: Boolean,
+    val lastUpdateCheck: Long,
+    /** versionCode the user postponed with "Позже"; the banner stays hidden for it. */
+    val dismissedUpdate: Long,
 )
 
 /** Small key-value settings; SharedPreferences is enough and has no extra dependencies. */
@@ -80,6 +85,9 @@ class SettingsRepository(context: Context) {
         autoApply = prefs.getStringSet(KEY_AUTO_APPLY, emptySet())?.toSet() ?: emptySet(),
         useInstructions = prefs.getBoolean(KEY_USE_INSTRUCTIONS, false),
         instructionsFile = prefs.getString(KEY_INSTRUCTIONS_FILE, null) ?: DEFAULT_INSTRUCTIONS,
+        autoUpdateCheck = prefs.getBoolean(KEY_AUTO_UPDATE, true),
+        lastUpdateCheck = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L),
+        dismissedUpdate = prefs.getLong(KEY_DISMISSED_UPDATE, 0L),
     )
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -112,6 +120,9 @@ class SettingsRepository(context: Context) {
         putStringSet(KEY_AUTO_APPLY, if (enabled) current.autoApply + kind else current.autoApply - kind)
     }
     fun setUseInstructions(value: Boolean) = edit { putBoolean(KEY_USE_INSTRUCTIONS, value) }
+    fun setAutoUpdateCheck(value: Boolean) = edit { putBoolean(KEY_AUTO_UPDATE, value) }
+    fun setLastUpdateCheck(millis: Long) = edit { putLong(KEY_LAST_UPDATE_CHECK, millis) }
+    fun setDismissedUpdate(versionCode: Long) = edit { putLong(KEY_DISMISSED_UPDATE, versionCode) }
 
     fun setPinned(path: String, pinned: Boolean) = edit {
         val updated = current.pinned.toMutableSet().apply { if (pinned) add(path) else remove(path) }
@@ -131,6 +142,9 @@ class SettingsRepository(context: Context) {
         private const val KEY_AUTO_APPLY = "ai_auto_apply"
         private const val KEY_USE_INSTRUCTIONS = "ai_use_instructions"
         private const val KEY_INSTRUCTIONS_FILE = "ai_instructions_file"
+        private const val KEY_AUTO_UPDATE = "update_auto_check"
+        private const val KEY_LAST_UPDATE_CHECK = "update_last_check"
+        private const val KEY_DISMISSED_UPDATE = "update_dismissed"
         private const val KEY_STORAGE = "storage"
         private const val KEY_BASE_URL = "ai_base_url"
         private const val KEY_MODEL = "ai_model"

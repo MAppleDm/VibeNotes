@@ -21,6 +21,7 @@ import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.StorageLocation
 import io.github.mappledm.vibenotes.data.ThemeMode
+import io.github.mappledm.vibenotes.data.UpdateState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +46,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val calendars: StateFlow<List<CalendarInfo>> = _calendars.asStateFlow()
 
     val calendarAllowed: Boolean get() = container.calendar.hasPermission()
+
+    val update: StateFlow<UpdateState> = container.updater.state
 
     init {
         loadCalendars()
@@ -181,6 +184,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setAccess(access: DataAccess, enabled: Boolean) = container.settings.setToolsEnabled(access.tools, enabled)
     fun setAutoApply(kind: String, enabled: Boolean) = container.settings.setAutoApply(kind, enabled)
     fun setUseInstructions(value: Boolean) = container.settings.setUseInstructions(value)
+    fun setAutoUpdateCheck(value: Boolean) = container.settings.setAutoUpdateCheck(value)
 
     fun clearChat() {
         viewModelScope.launch {
@@ -193,7 +197,5 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         notice = null
     }
 
-    val appVersion: String = runCatching {
-        container.app.packageManager.getPackageInfo(container.app.packageName, 0).versionName
-    }.getOrNull() ?: "—"
+    val appVersion: String = container.updater.currentVersionName
 }

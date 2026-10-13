@@ -7,6 +7,10 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// CI passes the workflow run number: every published build is newer than the previous one,
+// so the in-app updater can install it over the old version.
+val buildNumber = providers.environmentVariable("VERSION_CODE").orNull?.toIntOrNull()
+
 android {
     namespace = "io.github.mappledm.vibenotes"
     compileSdk = 36
@@ -15,8 +19,8 @@ android {
         applicationId = "io.github.mappledm.vibenotes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = buildNumber ?: 1
+        versionName = if (buildNumber != null) "0.1.$buildNumber" else "0.1.0-dev"
     }
 
     signingConfigs {

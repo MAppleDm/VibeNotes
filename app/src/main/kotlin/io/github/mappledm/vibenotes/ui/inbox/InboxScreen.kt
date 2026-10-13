@@ -92,6 +92,7 @@ import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
 import io.github.mappledm.vibenotes.ui.components.MarkdownView
 import io.github.mappledm.vibenotes.ui.components.OnResume
 import io.github.mappledm.vibenotes.ui.components.containerFactory
+import io.github.mappledm.vibenotes.ui.update.UpdateBanner
 import java.time.ZoneId
 
 private const val LOAD_ONLY = "load"
@@ -211,6 +212,7 @@ fun InboxScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            UpdateBanner()
             if (!aiConfigured) AiBanner(onOpenSettings)
             if (entries.isEmpty()) {
                 EmptyInbox(aiConfigured, onSuggestion = vm::useSuggestion)

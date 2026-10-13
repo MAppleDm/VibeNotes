@@ -29,10 +29,24 @@ jobs:
         run: python3 tools/check_icu_regex.py core/src/main app/src/main
 
       - name: Build debug APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
         run: ./gradlew :app:assembleDebug --stacktrace
 
       - name: Rename APK
         run: cp app/build/outputs/apk/debug/app-debug.apk VibeNotes.apk
+
+      # version.json is what the app checks for updates: version, APK link, SHA-256, what's new.
+      - name: Describe the build for the in-app updater
+        run: >
+          python3 tools/make_version_json.py
+          --apk VibeNotes.apk
+          --code ${{ github.run_number }}
+          --name 0.1.${{ github.run_number }}
+          --commit ${{ github.sha }}
+          --changelog CHANGELOG.md
+          --url https://github.com/${{ github.repository }}/releases/download/latest-build/VibeNotes.apk
+          --out version.json
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -61,6 +75,13 @@ jobs:
           make_latest: true
           files: VibeNotes.apk
           overwrite_files: true
+
+      # Last, so phones only learn about a version once its APK is already in place.
+      - name: Publish version manifest
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload latest-build version.json --clobber --repo ${{ github.repository }}
 
       - name: Upload test reports
         if: failure()

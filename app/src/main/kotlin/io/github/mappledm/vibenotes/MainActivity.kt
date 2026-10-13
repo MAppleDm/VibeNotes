@@ -17,6 +17,11 @@ class MainActivity : ComponentActivity() {
         setContent { VibeNotesRoot(container) }
     }
 
+    override fun onResume() {
+        super.onResume()
+        container.updater.onAppResumed()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         consumeShare(intent)

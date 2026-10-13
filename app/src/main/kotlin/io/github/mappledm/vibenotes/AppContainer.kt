@@ -20,6 +20,7 @@ import io.github.mappledm.vibenotes.core.notes.NotesRepository
 import io.github.mappledm.vibenotes.core.storage.FileStore
 import io.github.mappledm.vibenotes.core.storage.LocalFileStore
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
+import io.github.mappledm.vibenotes.data.AppUpdater
 import io.github.mappledm.vibenotes.data.SafFileStore
 import io.github.mappledm.vibenotes.data.SecretStore
 import io.github.mappledm.vibenotes.data.SettingsRepository
@@ -56,6 +57,7 @@ class AppContainer(val app: Application) {
     val secrets = SecretStore(app)
     val calendar = AndroidCalendarGateway(app)
     val llm = OpenAiCompatibleClient()
+    val updater = AppUpdater(app, settings, appScope)
     private val chatStore = ChatStore(File(app.filesDir, "inbox.json"))
 
     /** Text shared into the app from other apps, waiting to be put into the Inbox composer. */
