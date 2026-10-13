@@ -1,6 +1,5 @@
 package io.github.mappledm.vibenotes.ui.week
 
-import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -115,13 +114,7 @@ fun WeekScreen(onOpenDrawer: () -> Unit, onOpenBoard: (String) -> Unit) {
                 }
                 items(day.events, key = { "event:${day.date}:${it.eventId}:${it.start}" }) { event ->
                     EventRow(event) {
-                        runCatching {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, AndroidCalendarGateway.eventUri(event.eventId))
-                                    .putExtra("beginTime", event.start.toEpochMilli())
-                                    .putExtra("endTime", event.end.toEpochMilli()),
-                            )
-                        }
+                        runCatching { context.startActivity(AndroidCalendarGateway.viewTimeIntent(event.start.toEpochMilli())) }
                     }
                 }
                 items(day.tasks, key = { "task:${day.date}:${it.boardPath}:${it.ref.lane}:${it.ref.index}" }) { task ->

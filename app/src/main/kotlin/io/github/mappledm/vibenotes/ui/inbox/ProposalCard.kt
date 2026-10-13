@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
+import io.github.mappledm.vibenotes.core.agent.ResultTarget
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.inbox.ProposalItem
 import io.github.mappledm.vibenotes.core.inbox.ProposalStatus
@@ -180,7 +181,9 @@ private fun Footer(
             Icon(Icons.Outlined.CheckCircle, null, Modifier.size(18.dp), tint = LocalExtraColors.current.success)
             Spacer(Modifier.width(8.dp))
             Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            if (item.target != null) TextButton(onClick = onOpen) { Text("Открыть") }
+            if (item.target != null) {
+                TextButton(onClick = onOpen) { Text(if (item.target is ResultTarget.Event) "В календаре" else "Открыть") }
+            }
         }
         ProposalStatus.DISMISSED -> Text("Отменено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         ProposalStatus.FAILED -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

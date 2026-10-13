@@ -201,10 +201,16 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
 
         fun eventUri(eventId: Long) = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
 
-        /** Opens an event; calendar apps need the begin/end extras to find the instance. */
-        fun viewEventIntent(eventId: Long, beginMillis: Long, endMillis: Long): android.content.Intent =
-            android.content.Intent(android.content.Intent.ACTION_VIEW, eventUri(eventId))
-                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, beginMillis)
-                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endMillis)
+        /**
+         * Opens the calendar app on the day and time of an event.
+         * Opening by event id is unreliable: Google Calendar keeps its own ids and answers
+         * "event not found" for ids from the Calendar Provider, while the day view always works.
+         */
+        fun viewTimeIntent(beginMillis: Long): android.content.Intent {
+            val uri = CalendarContract.CONTENT_URI.buildUpon().appendPath("time").also {
+                ContentUris.appendId(it, beginMillis)
+            }.build()
+            return android.content.Intent(android.content.Intent.ACTION_VIEW, uri)
+        }
     }
 }

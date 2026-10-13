@@ -186,10 +186,9 @@ fun InboxScreen(
             is ResultTarget.Board -> onOpenBoard(target.path)
             is ResultTarget.Event -> runCatching {
                 val event = item.proposal as? ActionProposal.CreateEvent
-                val zone = ZoneId.systemDefault()
-                val begin = event?.startDateTime?.atZone(zone)?.toInstant()?.toEpochMilli() ?: System.currentTimeMillis()
-                val end = event?.endDateTime?.atZone(zone)?.toInstant()?.toEpochMilli() ?: begin
-                context.startActivity(AndroidCalendarGateway.viewEventIntent(target.eventId, begin, end))
+                val begin = event?.startDateTime?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
+                    ?: System.currentTimeMillis()
+                context.startActivity(AndroidCalendarGateway.viewTimeIntent(begin))
             }
             null -> Unit
         }
