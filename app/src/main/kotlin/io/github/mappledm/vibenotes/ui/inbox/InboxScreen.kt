@@ -10,9 +10,6 @@ import android.view.KeyCharacterMap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,23 +34,18 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.TaskAlt
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.HorizontalDivider
@@ -67,7 +59,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,8 +86,6 @@ import io.github.mappledm.vibenotes.core.agent.ActivityKind
 import io.github.mappledm.vibenotes.core.agent.ResultTarget
 import io.github.mappledm.vibenotes.core.agent.ToolActivity
 import io.github.mappledm.vibenotes.core.inbox.ChatEntry
-import io.github.mappledm.vibenotes.core.inbox.CommandAction
-import io.github.mappledm.vibenotes.core.inbox.SlashCommand
 import io.github.mappledm.vibenotes.core.inbox.ChatRole
 import io.github.mappledm.vibenotes.core.inbox.ProposalItem
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
@@ -117,11 +106,9 @@ private val Suggestions = listOf(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun InboxScreen(
-    onOpenDrawer: () -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenBoard: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onSwitchTab: (Int) -> Unit,
 ) {
     val vm: InboxViewModel = viewModel(factory = containerFactory { InboxViewModel(it) })
     val entries by vm.entries.collectAsStateWithLifecycle()
@@ -129,11 +116,8 @@ fun InboxScreen(
     val aiConfigured by vm.aiConfigured.collectAsStateWithLifecycle()
     val calendars by vm.calendars.collectAsStateWithLifecycle()
     val boards by vm.boards.collectAsStateWithLifecycle()
-    val settings by vm.settings.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
-    var menuOpen by remember { mutableStateOf(false) }
-    var confirmClear by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<Pair<String, ProposalItem>?>(null) }
     var pendingConfirm by rememberSaveable { mutableStateOf<String?>(null) }
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
@@ -205,36 +189,12 @@ fun InboxScreen(
 
     OnResume { vm.loadCalendars() }
 
-    LaunchedEffect(vm) {
-        vm.commandEvents.collect { action ->
-            when (action) {
-                CommandAction.OPEN_WEEK -> onSwitchTab(1)
-                CommandAction.OPEN_TASKS -> onSwitchTab(2)
-                CommandAction.OPEN_NOTES -> onSwitchTab(3)
-                CommandAction.OPEN_SETTINGS -> onOpenSettings()
-                CommandAction.CLEAR -> confirmClear = true
-                else -> Unit
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Входящие") },
-                navigationIcon = {
-                    IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, contentDescription = "Меню") }
-                },
                 actions = {
-                    Box {
-                        IconButton(onClick = { menuOpen = true }) { Icon(Icons.Outlined.MoreVert, contentDescription = "Ещё") }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(text = { Text("Команды") }, onClick = { menuOpen = false; vm.useSuggestion("/") })
-                            DropdownMenuItem(text = { Text("Под капотом: последний ответ") }, onClick = { menuOpen = false; vm.showLatestTrace() })
-                            DropdownMenuItem(text = { Text("Настройки") }, onClick = { menuOpen = false; onOpenSettings() })
-                            DropdownMenuItem(text = { Text("Очистить историю чата") }, onClick = { menuOpen = false; confirmClear = true })
-                        }
-                    }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, contentDescription = "Настройки") }
                 },
             )
         },
@@ -280,8 +240,6 @@ fun InboxScreen(
                             onChooseCalendar = { item, id -> vm.chooseCalendar(entry.id, item.id, id) },
                             onLoadCalendars = ::loadCalendars,
                             onWikiLink = { target -> vm.resolveNote(target)?.let(onOpenNote) },
-                            showDetails = settings.showDetails,
-                            onShowTrace = { vm.showTrace(entry.id) },
                         )
                     }
                 }
@@ -296,18 +254,6 @@ fun InboxScreen(
             boards = boards,
             onDismiss = { editing = null },
             onSave = { proposal, done -> vm.edit(entryId, item.id, proposal, done) },
-        )
-    }
-
-    vm.trace?.let { TraceSheet(it, onDismiss = vm::closeTrace) }
-
-    if (confirmClear) {
-        AlertDialog(
-            onDismissRequest = { confirmClear = false },
-            title = { Text("Очистить историю?") },
-            text = { Text("Сообщения чата будут удалены. Заметки, задачи и события останутся.") },
-            confirmButton = { TextButton(onClick = { confirmClear = false; vm.clearHistory() }) { Text("Очистить") } },
-            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } },
         )
     }
 }
@@ -385,8 +331,6 @@ private fun EntryItem(
     selectedCalendar: (ProposalItem) -> io.github.mappledm.vibenotes.core.calendar.CalendarInfo?,
     onChooseCalendar: (ProposalItem, Long) -> Unit,
     onLoadCalendars: () -> Unit,
-    showDetails: Boolean,
-    onShowTrace: () -> Unit,
 ) {
     when (entry.role) {
         ChatRole.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -403,14 +347,7 @@ private fun EntryItem(
         ChatRole.NOTICE -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
             Icon(Icons.Outlined.Info, null, Modifier.size(16.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.size(8.dp))
-            SelectionContainer(Modifier.weight(1f)) {
-                MarkdownView(
-                    entry.text,
-                    compact = true,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurfaceVariant),
-                    onWikiLink = onWikiLink,
-                )
-            }
+            Text(entry.text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         ChatRole.ASSISTANT -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (entry.activities.isNotEmpty()) ActivityList(entry.activities)
@@ -448,19 +385,6 @@ private fun EntryItem(
                     Spacer(Modifier.size(8.dp))
                     Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
                     TextButton(onClick = onRetry) { Text("Повторить") }
-                }
-            }
-            if (showDetails && entry.hasTrace && !entry.streaming) {
-                Surface(
-                    onClick = onShowTrace,
-                    shape = MaterialTheme.shapes.small,
-                    color = MaterialTheme.colorScheme.surface,
-                ) {
-                    Row(Modifier.padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Code, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.size(6.dp))
-                        Text("Под капотом", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
                 }
             }
         }
@@ -509,8 +433,6 @@ private fun Composer(vm: InboxViewModel, generating: Boolean, aiConfigured: Bool
                 .imePadding(),
         ) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            val suggestions = vm.suggestions
-            if (suggestions.isNotEmpty()) CommandSuggestions(suggestions, onPick = vm::pickCommand)
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -525,7 +447,7 @@ private fun Composer(vm: InboxViewModel, generating: Boolean, aiConfigured: Bool
                     Box(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
                         if (value.text.isEmpty()) {
                             Text(
-                                if (aiConfigured) "Событие, задача, мысль… или /команда" else "Запишите мысль… или /команда",
+                                if (aiConfigured) "Событие, задача, мысль…" else "Запишите мысль…",
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -570,42 +492,6 @@ private fun Composer(vm: InboxViewModel, generating: Boolean, aiConfigured: Bool
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
                     }
                 }
-            }
-        }
-    }
-}
-
-/** The command palette: shown while the composer holds "/…". */
-@Composable
-private fun CommandSuggestions(commands: List<SlashCommand>, onPick: (SlashCommand) -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .heightIn(max = 260.dp)
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 4.dp),
-    ) {
-        commands.forEach { command ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clickable { onPick(command) }
-                    .padding(horizontal = 20.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    "/${command.name}" + if (command.takesArgument) " ${command.hint}" else "",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.widthIn(min = 120.dp),
-                )
-                Spacer(Modifier.size(12.dp))
-                Text(
-                    command.description,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f),
-                )
             }
         }
     }

@@ -7,7 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
-import io.github.mappledm.vibenotes.core.agent.AgentTool
+import io.github.mappledm.vibenotes.core.agent.DataAccess
 import io.github.mappledm.vibenotes.core.ai.LlmEvent
 import io.github.mappledm.vibenotes.core.ai.LlmException
 import io.github.mappledm.vibenotes.core.ai.LlmMessage
@@ -33,13 +33,10 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val hasKey: StateFlow<Boolean> = container.secrets.hasApiKey
     val vaultName: String = container.vault.value?.name ?: "—"
     val index: StateFlow<VaultIndex>? = container.vault.value?.notes?.index
-    val tools: List<AgentTool> = container.vault.value?.tools?.tools.orEmpty()
 
     var testing by mutableStateOf(false)
         private set
     var testResult by mutableStateOf<Pair<Boolean, String>?>(null)
-        private set
-    var systemPrompt by mutableStateOf<String?>(null)
         private set
     var notice by mutableStateOf<String?>(null)
         private set
@@ -127,24 +124,46 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    /** Creates a service file with a template if needed and returns its path for the editor. */
-    private fun openFile(path: String, template: String, onReady: (String) -> Unit) {
+    /**
+     * Opens a file the app relies on in the editor, creating it from [template] if it is missing.
+     * [onCreated] runs only when the file did not exist yet.
+     */
+    private fun openFile(path: String, template: String, onCreated: () -> Unit = {}, onReady: (String) -> Unit) {
         val notes = container.vault.value?.notes ?: return
         viewModelScope.launch {
-            runCatching { if (notes.read(path) == null) notes.save(path, template) }
-                .onSuccess { onReady(path) }
+            runCatching {
+                val missing = notes.read(path) == null
+                if (missing) notes.save(path, template)
+                missing
+            }
+                .onSuccess { created ->
+                    if (created) onCreated()
+                    onReady(path)
+                }
                 .onFailure { notice = it.message ?: "Не удалось открыть файл" }
         }
     }
 
-    fun openAiIgnore(onReady: (String) -> Unit) = openFile(AiIgnore.FILE_NAME, AiIgnore.HEADER + "\n", onReady)
+    fun openAiIgnore(onReady: (String) -> Unit) = openFile(AiIgnore.FILE_NAME, AiIgnore.HEADER + "\n", onReady = onReady)
 
+    fun openInbox(onReady: (String) -> Unit) = openFile(settings.value.inboxNote, "", onReady = onReady)
+
+    fun openBoardFile(onReady: (String) -> Unit) {
+        val kanban = container.vault.value?.kanban ?: return
+        viewModelScope.launch {
+            runCatching { kanban.ensureBoard(settings.value.defaultBoard) }
+                .onSuccess(onReady)
+                .onFailure { notice = it.message ?: "Не удалось открыть доску" }
+        }
+    }
+
+    /** A new instructions file is switched on right away: writing it is the point. */
     fun openInstructions(onReady: (String) -> Unit) = openFile(
         settings.value.instructionsFile,
         """
         # Инструкции для ассистента
 
-        Этот файл ассистент читает перед каждым ответом (если включено в настройках).
+        Этот файл ассистент читает перед каждым ответом (выключается в «Настройки → Ассистент»).
         Пишите правила и факты о себе обычным языком, например:
 
         - Мой рабочий день: 9:00–18:00, по выходным встречи не ставь.
@@ -152,36 +171,21 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         - Встречи с Андреем всегда по 30 минут.
         - Покупки клади на доску «Покупки».
         """.trimIndent() + "\n",
-        onReady,
+        onCreated = { container.settings.setUseInstructions(true) },
+        onReady = onReady,
     )
 
-    // --- advanced -----------------------------------------------------------------------
+    // --- assistant ----------------------------------------------------------------------
 
-    fun setTemperature(value: Float) = container.settings.setTemperature(value)
-    fun setMaxSteps(value: Int) = container.settings.setMaxSteps(value)
     fun setHistorySize(value: Int) = container.settings.setHistorySize(value)
-    fun setToolEnabled(name: String, enabled: Boolean) = container.settings.setToolEnabled(name, enabled)
+    fun setAccess(access: DataAccess, enabled: Boolean) = container.settings.setToolsEnabled(access.tools, enabled)
     fun setAutoApply(kind: String, enabled: Boolean) = container.settings.setAutoApply(kind, enabled)
     fun setUseInstructions(value: Boolean) = container.settings.setUseInstructions(value)
-    fun setShowDetails(value: Boolean) = container.settings.setShowDetails(value)
-
-    fun resetAdvanced() {
-        container.settings.resetAdvanced()
-        notice = "Продвинутые настройки сброшены"
-    }
-
-    fun loadSystemPrompt() {
-        viewModelScope.launch { systemPrompt = container.previewSystemPrompt() ?: "Хранилище не выбрано" }
-    }
-
-    fun closeSystemPrompt() {
-        systemPrompt = null
-    }
 
     fun clearChat() {
         viewModelScope.launch {
             container.vault.value?.inbox?.clear()
-            notice = "История чата и детали запросов очищены"
+            notice = "История чата очищена"
         }
     }
 

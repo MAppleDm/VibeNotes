@@ -22,7 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,7 +54,7 @@ import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WeekScreen(onOpenDrawer: () -> Unit, onOpenBoard: (String) -> Unit) {
+fun WeekScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit) {
     val vm: WeekViewModel = viewModel(factory = containerFactory { WeekViewModel(it) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -70,11 +70,13 @@ fun WeekScreen(onOpenDrawer: () -> Unit, onOpenBoard: (String) -> Unit) {
                     val end = state.weekStart.plusDays(6)
                     Text("${Dates.dayMonth(state.weekStart)} – ${Dates.dayMonth(end)}")
                 },
-                navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "Меню") } },
                 actions = {
                     IconButton(onClick = { vm.shiftWeek(-1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Предыдущая неделя") }
-                    IconButton(onClick = vm::today) { Icon(Icons.Outlined.Today, "Эта неделя") }
+                    if (today !in state.weekStart..state.weekStart.plusDays(6)) {
+                        IconButton(onClick = vm::today) { Icon(Icons.Outlined.Today, "Эта неделя") }
+                    }
                     IconButton(onClick = { vm.shiftWeek(1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Следующая неделя") }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, "Настройки") }
                 },
             )
         },

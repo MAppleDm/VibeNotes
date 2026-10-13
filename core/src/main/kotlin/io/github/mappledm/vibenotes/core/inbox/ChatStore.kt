@@ -45,10 +45,6 @@ data class ChatEntry(
     val error: String? = null,
     /** The answer claimed an action in text without proposing one; kept out of the model's history. */
     val unverifiedClaim: Boolean = false,
-    /** A "/command" handled locally; never sent to the model. */
-    val isCommand: Boolean = false,
-    /** An "under the hood" trace is stored for this answer. */
-    val hasTrace: Boolean = false,
     /** True while the answer is being generated; never persisted. */
     @Transient val streaming: Boolean = false,
 )

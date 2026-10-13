@@ -184,7 +184,7 @@ private fun Footer(
                 Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium)
                 if (item.autoApplied) {
                     Text(
-                        "Выполнено автоматически (настройки → Для продвинутых)",
+                        "Без подтверждения — так настроено в «Настройки → Ассистент»",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

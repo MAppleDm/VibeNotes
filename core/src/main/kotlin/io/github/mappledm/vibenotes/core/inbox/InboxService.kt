@@ -2,7 +2,6 @@ package io.github.mappledm.vibenotes.core.inbox
 
 import io.github.mappledm.vibenotes.core.agent.ActionExecutor
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
-import io.github.mappledm.vibenotes.core.agent.AgentTrace
 import io.github.mappledm.vibenotes.core.agent.ProposalKind
 import io.github.mappledm.vibenotes.core.agent.kind
 import io.github.mappledm.vibenotes.core.agent.ActionResult
@@ -40,9 +39,7 @@ class InboxService(
     private val historySize: () -> Int = { 10 },
     private val now: () -> ZonedDateTime = { ZonedDateTime.now() },
     private val newId: () -> String = { UUID.randomUUID().toString() },
-    private val traces: TraceStore? = null,
     private val autoApply: () -> Set<ProposalKind> = { emptySet() },
-    private val defaultBoard: () -> String = { "Задачи.md" },
 ) {
     val entries = store.entries
 
@@ -86,10 +83,6 @@ class InboxService(
                     is AssistantEvent.Activity -> store.update(entryId, persist = false) { it.copy(activities = it.activities + event.activity) }
                     is AssistantEvent.Proposal -> store.update(entryId, persist = false) {
                         it.copy(proposals = it.proposals + ProposalItem(newId(), event.proposal))
-                    }
-                    is AssistantEvent.Trace -> traces?.let { store ->
-                        runCatching { store.put(entryId, event.trace) }
-                        this.store.update(entryId, persist = false) { it.copy(hasTrace = true) }
                     }
                     is AssistantEvent.Finished -> {
                         var claimed = false
@@ -141,62 +134,6 @@ class InboxService(
         }
     }
 
-    suspend fun trace(entryId: String): AgentTrace? = traces?.get(entryId)
-
-    suspend fun latestTraceId(): String? = traces?.latestId()
-
-    /**
-     * Runs a "/command". Data commands (task, note, inbox, search, help) execute here without AI
-     * and leave a note in the chat; navigation commands are returned for the UI to handle.
-     */
-    suspend fun runCommand(input: String): CommandAction? {
-        val (command, argument) = SlashCommands.parse(input) ?: return null
-        val local = command.action in setOf(CommandAction.TASK, CommandAction.NOTE, CommandAction.INBOX, CommandAction.SEARCH, CommandAction.HELP)
-        if (!local) return command.action
-        store.load()
-        store.add(ChatEntry(newId(), ChatRole.USER, input.trim(), now().toInstant().toEpochMilli(), isCommand = true))
-        val reply = if (command.takesArgument && argument.isBlank()) {
-            "Напишите после команды: `/${command.name} ${command.hint}`"
-        } else {
-            when (command.action) {
-                CommandAction.TASK -> resultText(executor.execute(ActionProposal.AddTask(defaultBoard(), "", argument)))
-                CommandAction.NOTE -> {
-                    val (title, body) = splitNote(argument)
-                    resultText(executor.execute(ActionProposal.CreateNote(title, body, "")), link = title)
-                }
-                CommandAction.INBOX -> {
-                    val stamp = now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
-                    resultText(executor.execute(ActionProposal.AppendToNote(inboxNotePath(), "- $stamp " + argument.replace("\n", "\n  "))))
-                }
-                CommandAction.SEARCH -> searchText(argument)
-                else -> SlashCommands.help()
-            }
-        }
-        store.add(ChatEntry(newId(), ChatRole.NOTICE, reply, now().toInstant().toEpochMilli()))
-        return command.action
-    }
-
-    private fun resultText(result: ActionResult, link: String? = null): String = when (result) {
-        is ActionResult.Success -> result.message + (link?.let { " — [[${it}]]" } ?: "")
-        is ActionResult.Failure -> "Не удалось: ${result.message}"
-    }
-
-    private fun splitNote(argument: String): Pair<String, String> {
-        val colon = argument.indexOf(':')
-        if (colon in 1..80) return argument.substring(0, colon).trim() to argument.substring(colon + 1).trim()
-        val firstLine = argument.lineSequence().first().trim()
-        val title = if (firstLine.length <= 60) firstLine else firstLine.take(60).substringBeforeLast(' ').ifBlank { firstLine.take(60) }
-        return title to argument.trim()
-    }
-
-    private fun searchText(query: String): String {
-        val hits = notes.search(query, 8)
-        if (hits.isEmpty()) return "По запросу «$query» ничего не найдено."
-        return "Найдено: ${hits.size}\n" + hits.joinToString("\n") { hit ->
-            "- [[${hit.note.title}]]" + (hit.snippet.takeIf { it.isNotBlank() }?.let { " — ${it.take(120)}" } ?: "")
-        }
-    }
-
     private suspend fun captureWithoutAi(message: String) {
         val path = inboxNotePath()
         val stamp = now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
@@ -239,10 +176,7 @@ class InboxService(
         return null
     }
 
-    suspend fun clear() {
-        store.clear()
-        traces?.clear()
-    }
+    suspend fun clear() = store.clear()
 
     /**
      * Recent turns for the model. Proposals are replayed as real tool calls with their outcome
@@ -250,9 +184,12 @@ class InboxService(
      * never sees actions written as text it could imitate.
      */
     internal fun buildHistory(entries: List<ChatEntry>): List<ConversationTurn> =
-        entries.filter { it.role != ChatRole.NOTICE && it.error == null && !it.streaming && !it.unverifiedClaim && !it.isCommand }
+        entries.filter { it.role != ChatRole.NOTICE && it.error == null && !it.streaming && !it.unverifiedClaim }
             // Older answers stored before the flag existed: same check, applied retroactively.
             .filterNot { it.role == ChatRole.ASSISTANT && it.proposals.isEmpty() && it.activities.isEmpty() && claimsCompletion(it.text) }
+            // A message without an answer (saved offline, failed, or answered only by a false claim)
+            // is not a request the model should pick up again.
+            .let { kept -> kept.filterIndexed { i, e -> e.role != ChatRole.USER || kept.getOrNull(i + 1)?.role == ChatRole.ASSISTANT } }
             .takeLast(historySize())
             .mapNotNull { entry ->
                 when (entry.role) {

@@ -23,7 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Description
@@ -75,12 +75,12 @@ import io.github.mappledm.vibenotes.ui.components.containerFactory
 @Composable
 fun NotesScreen(
     folder: String,
-    onOpenDrawer: () -> Unit,
     onBack: () -> Unit,
     onOpenFolder: (String) -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenBoard: (String) -> Unit,
     onNewNote: (String) -> Unit,
+    onOpenSettings: (() -> Unit)? = null,
 ) {
     val vm: NotesViewModel = viewModel(key = "notes:$folder", factory = containerFactory { NotesViewModel(it, folder) })
     val state by vm.state.collectAsStateWithLifecycle()
@@ -126,9 +126,7 @@ fun NotesScreen(
                     }
                 },
                 navigationIcon = {
-                    if (folder.isEmpty()) {
-                        IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "Меню") }
-                    } else {
+                    if (folder.isNotEmpty()) {
                         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
                     }
                 },
@@ -138,6 +136,7 @@ fun NotesScreen(
                     } else {
                         IconButton(onClick = { searching = true }) { Icon(Icons.Outlined.Search, "Поиск") }
                         IconButton(onClick = { newFolder = true }) { Icon(Icons.Outlined.CreateNewFolder, "Новая папка") }
+                        onOpenSettings?.let { open -> IconButton(onClick = open) { Icon(Icons.Outlined.Settings, "Настройки") } }
                     }
                 },
             )

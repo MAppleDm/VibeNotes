@@ -5,7 +5,6 @@ import android.net.Uri
 import io.github.mappledm.vibenotes.core.agent.ActionExecutor
 import io.github.mappledm.vibenotes.core.agent.AgentOptions
 import io.github.mappledm.vibenotes.core.agent.ProposalKind
-import io.github.mappledm.vibenotes.core.agent.SystemPrompt
 import io.github.mappledm.vibenotes.core.agent.AssistantContext
 import io.github.mappledm.vibenotes.core.agent.AssistantEngine
 import io.github.mappledm.vibenotes.core.agent.BoardInfo
@@ -15,7 +14,6 @@ import io.github.mappledm.vibenotes.core.ai.OpenAiCompatibleClient
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.inbox.ChatStore
 import io.github.mappledm.vibenotes.core.inbox.InboxService
-import io.github.mappledm.vibenotes.core.inbox.TraceStore
 import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
 import io.github.mappledm.vibenotes.core.kanban.KanbanRepository
 import io.github.mappledm.vibenotes.core.notes.NotesRepository
@@ -47,7 +45,6 @@ class Vault(
     val kanban: KanbanRepository,
     val executor: ActionExecutor,
     val inbox: InboxService,
-    val tools: ToolRegistry,
 )
 
 /**
@@ -60,7 +57,6 @@ class AppContainer(val app: Application) {
     val calendar = AndroidCalendarGateway(app)
     val llm = OpenAiCompatibleClient()
     private val chatStore = ChatStore(File(app.filesDir, "inbox.json"))
-    private val traceStore = TraceStore(File(app.filesDir, "traces.json"))
 
     /** Text shared into the app from other apps, waiting to be put into the Inbox composer. */
     val pendingShare = MutableStateFlow<String?>(null)
@@ -82,6 +78,8 @@ class AppContainer(val app: Application) {
     val storageProblem = MutableStateFlow<String?>(null)
 
     init {
+        // Request logs of an earlier build ("under the hood" view): private data, no longer used.
+        runCatching { File(app.filesDir, "traces.json").delete() }
         openVault(settings.current.storage)
         appScope.launch { chatStore.load() }
     }
@@ -134,11 +132,9 @@ class AppContainer(val app: Application) {
             contextProvider = { assistantContext(notes) },
             inboxNotePath = { settings.current.inboxNote },
             historySize = { settings.current.historySize },
-            traces = traceStore,
             autoApply = { settings.current.autoApply.mapNotNull { name -> runCatching { ProposalKind.valueOf(name) }.getOrNull() }.toSet() },
-            defaultBoard = { settings.current.defaultBoard },
         )
-        _vault.value = Vault(UUID.randomUUID().toString(), store.displayName, notes, kanban, executor, inbox, tools)
+        _vault.value = Vault(UUID.randomUUID().toString(), store.displayName, notes, kanban, executor, inbox)
         appScope.launch { runCatching { notes.refresh() } }
     }
 
@@ -171,12 +167,7 @@ class AppContainer(val app: Application) {
             defaultCalendarId = defaultCalendar,
             defaultEventMinutes = s.eventMinutes,
             defaultReminderMinutes = s.reminderMinutes,
-            options = AgentOptions(
-                temperature = s.temperature.toDouble(),
-                maxSteps = s.maxSteps,
-                disabledTools = s.disabledTools,
-                customInstructions = customInstructions(notes),
-            ),
+            options = AgentOptions(disabledTools = s.disabledTools, customInstructions = customInstructions(notes)),
         )
     }
 
@@ -185,11 +176,5 @@ class AppContainer(val app: Application) {
         val s = settings.current
         if (!s.useInstructions || notes.isHiddenFromAi(s.instructionsFile)) return null
         return runCatching { notes.read(s.instructionsFile) }.getOrNull()?.takeIf { it.isNotBlank() }
-    }
-
-    /** Exactly the system prompt the next message would use. */
-    suspend fun previewSystemPrompt(): String? {
-        val notes = _vault.value?.notes ?: return null
-        return SystemPrompt.build(assistantContext(notes))
     }
 }

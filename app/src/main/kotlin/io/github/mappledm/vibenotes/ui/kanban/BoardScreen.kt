@@ -29,9 +29,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
@@ -96,7 +97,7 @@ import java.time.LocalDate
 @Composable
 fun BoardScreen(
     path: String,
-    onOpenDrawer: () -> Unit,
+    onOpenSettings: () -> Unit,
     onOpenAsText: (String) -> Unit,
     boards: List<NoteMeta> = emptyList(),
     onSwitchBoard: ((String) -> Unit)? = null,
@@ -109,6 +110,7 @@ fun BoardScreen(
     var menu by remember { mutableStateOf(false) }
     var boardMenu by remember { mutableStateOf(false) }
     var addingLane by remember { mutableStateOf(false) }
+    var newBoard by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<CardRef?>(null) }
     // Collapsed state per column title; "done" columns start collapsed.
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
@@ -129,19 +131,27 @@ fun BoardScreen(
                     Box {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = if (onSwitchBoard != null && boards.size > 1) Modifier.clip(MaterialTheme.shapes.small).clickable { boardMenu = true } else Modifier,
+                            modifier = if (onSwitchBoard != null) Modifier.clip(MaterialTheme.shapes.small).clickable { boardMenu = true } else Modifier,
                         ) {
                             Text(vm.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            if (onSwitchBoard != null && boards.size > 1) Icon(Icons.Filled.ArrowDropDown, "Другая доска")
+                            if (onSwitchBoard != null) Icon(Icons.Filled.ArrowDropDown, "Доски")
                         }
                         DropdownMenu(expanded = boardMenu, onDismissRequest = { boardMenu = false }) {
                             boards.forEach { meta ->
-                                DropdownMenuItem(text = { Text(meta.title) }, onClick = { boardMenu = false; onSwitchBoard?.invoke(meta.path) })
+                                DropdownMenuItem(
+                                    text = { Text(meta.title) },
+                                    leadingIcon = { Icon(Icons.Outlined.ViewColumn, null) },
+                                    onClick = { boardMenu = false; onSwitchBoard?.invoke(meta.path) },
+                                )
                             }
+                            DropdownMenuItem(
+                                text = { Text("Новая доска") },
+                                leadingIcon = { Icon(Icons.Filled.Add, null) },
+                                onClick = { boardMenu = false; newBoard = true },
+                            )
                         }
                     }
                 },
-                navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "Меню") } },
                 actions = {
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Ещё") }
@@ -150,6 +160,7 @@ fun BoardScreen(
                             DropdownMenuItem(text = { Text("Открыть как Markdown") }, onClick = { menu = false; onOpenAsText(path) })
                         }
                     }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, "Настройки") }
                 },
             )
         },
@@ -211,6 +222,11 @@ fun BoardScreen(
         }
     }
 
+    if (newBoard) {
+        TextInputDialog("Новая доска", "", "Создать", onDismiss = { newBoard = false }) { title ->
+            vm.createBoard(title) { created -> onSwitchBoard?.invoke(created) }
+        }
+    }
     if (addingLane) {
         TextInputDialog("Новая колонка", "", "Добавить", onDismiss = { addingLane = false }) { vm.addLane(it) }
     }

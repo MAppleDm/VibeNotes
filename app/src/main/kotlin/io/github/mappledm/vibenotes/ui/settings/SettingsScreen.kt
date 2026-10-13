@@ -5,7 +5,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -13,14 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -28,12 +25,13 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Palette
-import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.ViewColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -64,19 +62,16 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.mappledm.vibenotes.core.agent.DataAccess
 import io.github.mappledm.vibenotes.core.agent.ProposalKind
-import io.github.mappledm.vibenotes.core.agent.ToolKind
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
-import io.github.mappledm.vibenotes.core.inbox.SlashCommands
+import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
 import io.github.mappledm.vibenotes.data.AppSettings
@@ -87,17 +82,16 @@ import io.github.mappledm.vibenotes.ui.components.Selector
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.components.reminderLabel
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
-import io.github.mappledm.vibenotes.ui.theme.MonoStyle
 
 /** Settings are grouped like a phone's settings app: a short list, details one tap away. */
 enum class SettingsSection(val id: String, val title: String, val icon: ImageVector) {
-    AI("ai", "AI-ассистент", Icons.Outlined.AutoAwesome),
+    AI("ai", "Подключение AI", Icons.Outlined.Key),
+    ASSISTANT("assistant", "Ассистент", Icons.Outlined.AutoAwesome),
     CALENDAR("calendar", "Календарь", Icons.Outlined.CalendarMonth),
     TASKS("tasks", "Задачи и заметки", Icons.Outlined.ViewColumn),
     STORAGE("storage", "Хранилище", Icons.Outlined.Folder),
     PRIVACY("privacy", "Приватность", Icons.Outlined.Lock),
     APPEARANCE("appearance", "Оформление", Icons.Outlined.Palette),
-    ADVANCED("advanced", "Для продвинутых", Icons.Outlined.Tune),
     ABOUT("about", "О приложении", Icons.Outlined.Info),
     ;
 
@@ -151,12 +145,12 @@ fun SettingsScreen(
                 ) {
                     when (current) {
                         SettingsSection.AI -> AiSection(vm, settings)
+                        SettingsSection.ASSISTANT -> AssistantSection(vm, settings, onOpenNote)
                         SettingsSection.CALENDAR -> CalendarSection(vm, settings)
                         SettingsSection.TASKS -> TasksSection(vm, settings)
-                        SettingsSection.STORAGE -> StorageSection(vm)
+                        SettingsSection.STORAGE -> StorageSection(vm, settings, onOpenNote)
                         SettingsSection.PRIVACY -> PrivacySection(vm, onOpenNote)
                         SettingsSection.APPEARANCE -> AppearanceSection(vm, settings)
-                        SettingsSection.ADVANCED -> AdvancedSection(vm, settings, onOpenNote)
                         SettingsSection.ABOUT -> AboutSection(vm)
                     }
                     Spacer(Modifier.height(24.dp))
@@ -171,16 +165,15 @@ private fun SettingsHome(vm: SettingsViewModel, settings: AppSettings, onOpen: (
     val hasKey by vm.hasKey.collectAsStateWithLifecycle()
     val calendars by vm.calendars.collectAsStateWithLifecycle()
     SettingsSection.entries.forEach { section ->
-        if (section == SettingsSection.ADVANCED) HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant)
         val summary = when (section) {
             SettingsSection.AI -> if (hasKey) "${providerName(settings.baseUrl)} · ${settings.model}" else "Не подключён — сообщения сохраняются во «Входящие»"
+            SettingsSection.ASSISTANT -> assistantSummary(settings)
             SettingsSection.CALENDAR -> (calendars.firstOrNull { it.id == settings.defaultCalendarId }?.label ?: "Календарь: спрашивать") +
                 " · ${settings.eventMinutes} мин"
             SettingsSection.TASKS -> "Доска «${VaultPaths.baseName(settings.defaultBoard)}» · «${VaultPaths.baseName(settings.inboxNote)}»"
             SettingsSection.STORAGE -> vm.vaultName
             SettingsSection.PRIVACY -> ".aiignore и что уходит в AI"
             SettingsSection.APPEARANCE -> paletteLabel(settings.palette) + " · " + themeLabel(settings.theme)
-            SettingsSection.ADVANCED -> "Инструменты, свои инструкции, детали запросов, команды"
             SettingsSection.ABOUT -> "Версия ${vm.appVersion} · GPL-3.0"
         }
         Row(
@@ -255,7 +248,7 @@ private fun AiSection(vm: SettingsViewModel, settings: AppSettings) {
             Text(message, style = MaterialTheme.typography.bodyMedium)
         }
     }
-    Hint("Ключ шифруется ключом из Android Keystore и не попадает в логи. Тонкая настройка модели — в разделе «Для продвинутых».")
+    Hint("Ключ шифруется ключом из Android Keystore и не попадает в логи.")
 }
 
 @Composable
@@ -283,7 +276,7 @@ private fun TasksSection(vm: SettingsViewModel, settings: AppSettings) {
     val index = vm.index?.collectAsStateWithLifecycle()?.value
     val boards = index?.boards.orEmpty()
     Label("Доска по умолчанию")
-    Hint("Сюда попадают задачи из чата и команды /задача. Её же показывает вкладка «Задачи».")
+    Hint("Сюда попадают задачи из чата. Её же показывает вкладка «Задачи».")
     Selector(
         options = (boards.map { it.path to it.title } + (settings.defaultBoard to VaultPaths.baseName(settings.defaultBoard))).distinctBy { it.first },
         selected = settings.defaultBoard,
@@ -297,7 +290,7 @@ private fun TasksSection(vm: SettingsViewModel, settings: AppSettings) {
 }
 
 @Composable
-private fun StorageSection(vm: SettingsViewModel) {
+private fun StorageSection(vm: SettingsViewModel, settings: AppSettings, onOpenNote: (String) -> Unit) {
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.chooseFolder(uri)
     }
@@ -307,6 +300,15 @@ private fun StorageSection(vm: SettingsViewModel) {
         OutlinedButton(onClick = { folderPicker.launch(null) }) { Text("Выбрать папку") }
         Spacer(Modifier.width(8.dp))
         TextButton(onClick = vm::useInternalStorage) { Text("Внутри приложения") }
+    }
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Label("Файлы, на которых всё держится")
+    Hint("Это обычный текст: можно открыть и поправить здесь или в Obsidian на ПК.")
+    Column {
+        FileRow("Входящие", settings.inboxNote) { vm.openInbox(onOpenNote) }
+        FileRow("Доска задач", settings.defaultBoard) { vm.openBoardFile(onOpenNote) }
+        FileRow("Инструкции ассистенту", settings.instructionsFile) { vm.openInstructions(onOpenNote) }
+        FileRow("Что скрыто от AI", AiIgnore.FILE_NAME) { vm.openAiIgnore(onOpenNote) }
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Hint("Если что-то изменили на ПК, а в приложении не видно, — перечитайте файлы.")
@@ -319,9 +321,9 @@ private fun PrivacySection(vm: SettingsViewModel, onOpenNote: (String) -> Unit) 
     Hint(
         "• ваше сообщение и последние сообщения чата;\n" +
             "• служебный контекст: дата и время, названия досок, колонок, папок и календарей;\n" +
-            "• заметки, задачи и события — только когда ассистент их ищет или читает. Каждое такое действие видно в чате над ответом;\n" +
-            "• ваш файл инструкций, если он включён в «Для продвинутых».\n" +
-            "Команды через «/» работают без AI. Без ключа приложение полностью офлайн.",
+            "• заметки, задачи и события — только когда ассистент их ищет или читает, и только то, что разрешено в «Ассистент». Каждое такое действие видно в чате над ответом;\n" +
+            "• ваш файл инструкций, если он включён в «Ассистент».\n" +
+            "Без ключа приложение полностью офлайн.",
     )
     Label("Скрытые от AI заметки")
     Hint(
@@ -348,82 +350,62 @@ private fun AppearanceSection(vm: SettingsViewModel, settings: AppSettings) {
     }
 }
 
+/**
+ * How the assistant understands you and what it may do — the part worth tinkering with,
+ * in plain words. Everything here is optional; the defaults only ever propose.
+ */
 @Composable
-private fun AdvancedSection(vm: SettingsViewModel, settings: AppSettings, onOpenNote: (String) -> Unit) {
+private fun AssistantSection(vm: SettingsViewModel, settings: AppSettings, onOpenNote: (String) -> Unit) {
     var confirmClear by remember { mutableStateOf(false) }
-    var confirmReset by remember { mutableStateOf(false) }
-
-    Hint("Всё здесь необязательно: приложение работает и без этих настроек.")
-
-    Group("Прозрачность")
-    SwitchRow(
-        "Показывать «Под капотом»",
-        "Под ответами AI появится кнопка: промпт, отправленные сообщения, вызовы инструментов, токены и время. Последний ответ — также командой /детали.",
-        settings.showDetails,
-        vm::setShowDetails,
-    )
-    OutlinedButton(onClick = vm::loadSystemPrompt) { Text("Показать системный промпт") }
 
     Group("Мои инструкции")
-    SwitchRow(
-        "Использовать ${settings.instructionsFile}",
-        "Файл в папке заметок, который ассистент читает перед ответом: ваш распорядок, адреса, правила. Уходит провайдеру AI вместе с запросом.",
-        settings.useInstructions,
-        vm::setUseInstructions,
+    Hint(
+        "Как agents.md на ПК: файл ${settings.instructionsFile} в папке заметок, который ассистент читает перед каждым ответом. " +
+            "Напишите туда распорядок, адреса, привычки — например, «врач — это поликлиника на Кирова, 38» или «покупки клади на доску Покупки».",
     )
+    SwitchRow("Учитывать инструкции", null, settings.useInstructions, vm::setUseInstructions)
     OutlinedButton(onClick = { vm.openInstructions(onOpenNote) }) { Text("Открыть ${settings.instructionsFile}") }
 
     Group("Без подтверждения")
-    Hint("Выбранные действия выполняются сразу, без карточки. События — только если календарь уже выбран.")
-    ProposalKind.entries.forEach { kind ->
-        SwitchRow("Сразу добавлять ${kind.label}", null, kind.name in settings.autoApply) { vm.setAutoApply(kind.name, it) }
+    Hint("Обычно ассистент показывает карточку и ничего не меняет, пока вы не нажмёте кнопку. Можно разрешить ему сразу:")
+    Column {
+        ProposalKind.entries.forEach { kind ->
+            SwitchRow("Добавлять ${kind.label}", null, kind.name in settings.autoApply) { vm.setAutoApply(kind.name, it) }
+        }
     }
+    Hint("Событие без выбранного календаря всё равно спросит, куда его поставить. Такие действия помечаются в чате.")
 
-    Group("Инструменты ассистента")
-    Hint("Выключенный инструмент модель не видит и не может вызвать.")
-    vm.tools.forEach { tool ->
-        val name = tool.spec.name
-        SwitchRow(
-            toolLabel(name),
-            (if (tool.kind == ToolKind.READ) "Чтение · " else "Предложение с подтверждением · ") + name,
-            name !in settings.disabledTools,
-        ) { vm.setToolEnabled(name, it) }
+    Group("Что ассистент может смотреть")
+    Column {
+        DataAccess.entries.forEach { access ->
+            SwitchRow(access.label, access.description, access.tools.none { it in settings.disabledTools }) { vm.setAccess(access, it) }
+        }
     }
+    Hint("Отдельные заметки и папки можно скрыть от AI в разделе «Приватность».")
 
-    Group("Модель")
-    Text("Температура: ${"%.1f".format(settings.temperature)}", style = MaterialTheme.typography.bodyLarge)
-    Hint("Ниже — точнее и предсказуемее, выше — свободнее формулировки.")
-    Slider(value = settings.temperature, onValueChange = { vm.setTemperature((it * 10).toInt() / 10f) }, valueRange = 0f..1f, steps = 9)
-    Text("Шагов на ответ: ${settings.maxSteps}", style = MaterialTheme.typography.bodyLarge)
-    Hint("Сколько раз ассистент может поискать или прочитать что-то перед ответом.")
-    Slider(value = settings.maxSteps.toFloat(), onValueChange = { vm.setMaxSteps(it.toInt()) }, valueRange = 1f..10f, steps = 8)
-    Text("Сообщений истории в запросе: ${settings.historySize}", style = MaterialTheme.typography.bodyLarge)
-    Slider(value = settings.historySize.toFloat(), onValueChange = { vm.setHistorySize(it.toInt()) }, valueRange = 0f..20f, steps = 19)
+    Group("Память")
+    Text("Помнит последних сообщений: ${settings.historySize}", style = MaterialTheme.typography.bodyLarge)
+    Hint("Чтобы понимать «перенеси на 10» или «и ещё молоко». Больше — лучше помнит, но запрос дольше и дороже.")
+    Slider(
+        value = settings.historySize.toFloat(),
+        onValueChange = { vm.setHistorySize(it.toInt()) },
+        valueRange = 0f..20f,
+        steps = 19,
+    )
+    TextButton(onClick = { confirmClear = true }) { Text("Очистить историю чата") }
 
-    Group("Команды")
-    Hint("Наберите «/» в строке ввода. Команды работают без AI.")
-    SlashCommands.all.forEach { c ->
-        Text(
-            "/${c.name}${if (c.takesArgument) " ${c.hint}" else ""} — ${c.description}",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
-
-    Group("Обслуживание")
-    TextButton(onClick = { confirmClear = true }) { Text("Очистить историю чата и детали запросов") }
-    TextButton(onClick = { confirmReset = true }) { Text("Сбросить продвинутые настройки") }
-
-    vm.systemPrompt?.let { prompt -> TextDialog("Системный промпт", prompt, vm::closeSystemPrompt) }
     if (confirmClear) {
-        ConfirmDialog("Очистить историю чата?", "Заметки, задачи и события не затрагиваются.", { vm.clearChat() }) { confirmClear = false }
+        ConfirmDialog("Очистить историю чата?", "Заметки, задачи и события не затрагиваются.", vm::clearChat) { confirmClear = false }
     }
-    if (confirmReset) {
-        ConfirmDialog(
-            "Сбросить продвинутые настройки?",
-            "Инструменты, автодобавление, параметры модели и детали вернутся к значениям по умолчанию.",
-            { vm.resetAdvanced() },
-        ) { confirmReset = false }
+}
+
+private fun assistantSummary(settings: AppSettings): String {
+    val parts = buildList {
+        if (settings.useInstructions) add("свои инструкции")
+        if (settings.autoApply.isNotEmpty()) add("часть действий без подтверждения")
+        if (DataAccess.entries.any { a -> a.tools.any { it in settings.disabledTools } }) add("доступ ограничен")
     }
+    return if (parts.isEmpty()) "Инструкции, подтверждения, доступ к данным" else parts.joinToString(" · ").replaceFirstChar { it.uppercase() }
 }
 
 @Composable
@@ -470,25 +452,22 @@ private fun SwitchRow(title: String, subtitle: String?, checked: Boolean, onChan
 }
 
 @Composable
-fun TextDialog(title: String, text: String, onClose: () -> Unit) {
-    val clipboard = LocalClipboardManager.current
-    AlertDialog(
-        onDismissRequest = onClose,
-        title = { Text(title) },
-        text = {
-            SelectionContainer {
-                Text(
-                    text,
-                    style = MonoStyle.copy(fontSize = 11.sp, lineHeight = 14.sp),
-                    modifier = Modifier
-                        .heightIn(max = 420.dp)
-                        .verticalScroll(rememberScrollState()),
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = { clipboard.setText(AnnotatedString(text)); onClose() }) { Text("Скопировать") } },
-        dismissButton = { TextButton(onClick = onClose) { Text("Закрыть") } },
-    )
+private fun FileRow(title: String, fileName: String, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.Description, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(fileName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
 }
 
 @Composable
@@ -521,17 +500,4 @@ private fun themeLabel(mode: ThemeMode) = when (mode) {
     ThemeMode.SYSTEM -> "Как в системе"
     ThemeMode.LIGHT -> "Светлая"
     ThemeMode.DARK -> "Тёмная"
-}
-
-fun toolLabel(name: String): String = when (name) {
-    "search_notes" -> "Поиск по заметкам"
-    "read_note" -> "Чтение заметок"
-    "list_tasks" -> "Просмотр задач"
-    "list_calendars" -> "Список календарей"
-    "list_calendar_events" -> "Чтение календаря"
-    "create_calendar_event" -> "Предлагать события"
-    "create_note" -> "Предлагать заметки"
-    "append_to_note" -> "Дописывать в заметки"
-    "add_task" -> "Предлагать задачи"
-    else -> name
 }

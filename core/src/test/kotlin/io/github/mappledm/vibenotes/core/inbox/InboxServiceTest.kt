@@ -161,7 +161,19 @@ class InboxServiceTest {
         assertTrue(answer.unverifiedClaim)
         assertTrue(answer.proposals.isEmpty())
         assertTrue(entries.last().role == ChatRole.NOTICE && entries.last().text.startsWith("Ничего не добавлено"))
-        assertEquals(listOf(Role.USER), inbox.buildHistory(entries).map { it.role })
+        // The request was not fulfilled: neither the claim nor the question goes back to the model.
+        assertTrue(inbox.buildHistory(entries).isEmpty())
+    }
+
+    @Test
+    fun unansweredMessagesAreNotReplayedAsRequests() = runTest {
+        val (offline, _) = service(ScriptedLlm(), config = null)
+        offline.send("в четверг к врачу")
+        assertTrue(offline.buildHistory(offline.entries.value).isEmpty())
+
+        val (inbox, _) = service(ScriptedLlm(ScriptedLlm.text("Привет!")), config)
+        inbox.send("привет")
+        assertEquals(listOf(Role.USER, Role.ASSISTANT), inbox.buildHistory(inbox.entries.value).map { it.role })
     }
 
     @Test

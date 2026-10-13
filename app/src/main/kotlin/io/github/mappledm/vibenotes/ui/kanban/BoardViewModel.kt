@@ -69,6 +69,17 @@ class BoardViewModel(container: AppContainer, val path: String, private val crea
         }
     }
 
+    /** Creates a board with the default columns next to the others and reports its path. */
+    fun createBoard(title: String, onCreated: (String) -> Unit) {
+        val clean = title.trim()
+        if (clean.isEmpty()) return
+        viewModelScope.launch {
+            runCatching { kanban.createBoard("", clean) }
+                .onSuccess { onCreated(it.path) }
+                .onFailure { _error.value = it.message ?: "Не удалось создать доску" }
+        }
+    }
+
     fun move(ref: CardRef, toLane: Int) = change { it.moveCard(ref, toLane) }
     fun setChecked(ref: CardRef, checked: Boolean) = change { it.setChecked(ref, checked) }
     fun delete(ref: CardRef) = change { it.removeCard(ref) }

@@ -2,12 +2,14 @@ package io.github.mappledm.vibenotes.core.inbox
 
 import io.github.mappledm.vibenotes.core.agent.AgentOptions
 import io.github.mappledm.vibenotes.core.agent.AssistantEngine
+import io.github.mappledm.vibenotes.core.agent.DataAccess
 import io.github.mappledm.vibenotes.core.agent.DefaultActionExecutor
 import io.github.mappledm.vibenotes.core.agent.FakeCalendar
 import io.github.mappledm.vibenotes.core.agent.ProposalKind
 import io.github.mappledm.vibenotes.core.agent.ScriptedLlm
 import io.github.mappledm.vibenotes.core.agent.TEST_NOW
 import io.github.mappledm.vibenotes.core.agent.TEST_ZONE
+import io.github.mappledm.vibenotes.core.agent.ToolKind
 import io.github.mappledm.vibenotes.core.agent.ToolRegistry
 import io.github.mappledm.vibenotes.core.agent.testContext
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
@@ -19,14 +21,14 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-class PowerFeaturesTest {
+/** What the user can tune about the assistant: tools, own instructions, auto-apply. */
+class AssistantPreferencesTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
@@ -54,64 +56,18 @@ class PowerFeaturesTest {
             inboxNotePath = { "Входящие.md" },
             now = { TEST_NOW },
             newId = { "id${ids++}" },
-            traces = TraceStore(File(root.parentFile, "traces-${ids++}.json")),
             autoApply = { autoApply },
-            defaultBoard = { "Задачи.md" },
         )
         return Env(inbox, root, llm, calendar)
     }
 
     @Test
-    fun slashCommandsParseAndSuggest() {
-        assertEquals(CommandAction.TASK, SlashCommands.parse("/задача купить хлеб")!!.first.action)
-        assertEquals("купить хлеб", SlashCommands.parse("/t купить хлеб")!!.second)
-        assertNull(SlashCommands.parse("/неизвестно x"))
-        assertNull(SlashCommands.parse("просто текст"))
-        assertEquals(listOf("задача", "заметка", "заметки"), SlashCommands.suggestions("/за").map { it.name })
-        assertTrue(SlashCommands.suggestions("/задача хлеб").isEmpty())
-    }
-
-    @Test
-    fun dataCommandsRunWithoutAiAndStayOutOfHistory() = runTest {
-        val e = env()
-        assertEquals(CommandAction.TASK, e.inbox.runCommand("/задача Купить хлеб"))
-        assertTrue(File(e.root, "Задачи.md").readText().contains("- [ ] Купить хлеб"))
-
-        e.inbox.runCommand("/заметка Идея: приложение для заметок")
-        assertEquals("приложение для заметок\n", File(e.root, "Идея.md").readText())
-
-        e.inbox.runCommand("/входящие позвонить")
-        assertEquals("- 2026-10-13 10:30 позвонить\n", File(e.root, "Входящие.md").readText())
-
-        e.inbox.runCommand("/найти приложение")
-        assertTrue(e.inbox.entries.value.last().text.contains("[[Идея]]"))
-
-        e.inbox.runCommand("/задача")
-        assertTrue(e.inbox.entries.value.last().text.startsWith("Напишите после команды"))
-
-        assertEquals(CommandAction.OPEN_WEEK, e.inbox.runCommand("/неделя"))
-        assertTrue(e.llm.requests.isEmpty())
-        assertTrue(e.inbox.buildHistory(e.inbox.entries.value).isEmpty())
-    }
-
-    @Test
-    fun traceRecordsWhatWasSent() = runTest {
-        val e = env(
-            ScriptedLlm(
-                ScriptedLlm.calls("list_tasks" to "{}"),
-                ScriptedLlm.text("Задач нет."),
-            ),
-        )
-        e.inbox.send("какие задачи?")
-        val answer = e.inbox.entries.value.last()
-        assertTrue(answer.hasTrace)
-        val trace = e.inbox.trace(answer.id)!!
-        assertEquals("deepseek-chat", trace.model)
-        assertEquals(2, trace.steps.size)
-        assertEquals("list_tasks", trace.steps[0].toolCalls.single().name)
-        assertTrue(trace.systemPrompt.contains("VibeNotes"))
-        assertEquals("какие задачи?", trace.messages.last().content)
-        assertEquals(answer.id, e.inbox.latestTraceId())
+    fun dataAccessSwitchesCoverRealReadTools() {
+        val notes = NotesRepository(LocalFileStore(tmp.newFolder(), Dispatchers.Unconfined))
+        val tools = ToolRegistry(notes, KanbanRepository(notes), FakeCalendar()).tools.associateBy { it.spec.name }
+        DataAccess.entries.forEach { access ->
+            access.tools.forEach { name -> assertEquals("$access/$name", ToolKind.READ, tools[name]?.kind) }
+        }
     }
 
     @Test

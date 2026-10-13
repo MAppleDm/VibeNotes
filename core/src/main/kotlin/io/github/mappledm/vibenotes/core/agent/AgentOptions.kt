@@ -2,7 +2,7 @@ package io.github.mappledm.vibenotes.core.agent
 
 import kotlinx.serialization.Serializable
 
-/** Advanced, user-tunable behaviour of the assistant ("under the hood" settings). */
+/** How the assistant behaves, as tuned by the user in settings. */
 data class AgentOptions(
     val temperature: Double = 0.3,
     /** Model round-trips allowed per message (each read tool result needs one). */
@@ -12,6 +12,13 @@ data class AgentOptions(
     /** The user's own instructions (AGENTS.md in the vault), appended to the system prompt. */
     val customInstructions: String? = null,
 )
+
+/** What the assistant may look at, in the user's terms; each switch covers some READ tools. */
+enum class DataAccess(val label: String, val description: String, val tools: Set<String>) {
+    NOTES("Заметки", "Искать и читать заметки, когда это нужно для ответа", setOf("search_notes", "read_note")),
+    TASKS("Задачи", "Смотреть карточки и сроки на досках", setOf("list_tasks")),
+    CALENDAR("Календарь", "Смотреть события, чтобы отвечать «что у меня на неделе» и не ставить встречи внахлёст", setOf("list_calendar_events")),
+}
 
 /** Kinds of changes the assistant can propose; the user may let some apply without a card. */
 @Serializable
