@@ -1,0 +1,91 @@
+name: Android CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Core unit tests (storage, Kanban, Markdown, AI client, tools)
+        run: ./gradlew :core:test --stacktrace
+
+      - name: Regex patterns compile on Android's ICU engine
+        run: python3 tools/check_icu_regex.py core/src/main app/src/main
+
+      - name: Build debug APK
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: ./gradlew :app:assembleDebug --stacktrace
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk VibeNotes.apk
+
+      # version.json is what the app checks for updates: version, APK link, SHA-256, what's new.
+      - name: Describe the build for the in-app updater
+        run: >
+          python3 tools/make_version_json.py
+          --apk VibeNotes.apk
+          --code ${{ github.run_number }}
+          --name 0.1.${{ github.run_number }}
+          --commit ${{ github.sha }}
+          --changelog CHANGELOG.md
+          --url https://github.com/${{ github.repository }}/releases/download/latest-build/VibeNotes.apk
+          --out version.json
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vibenotes-debug-apk
+          path: VibeNotes.apk
+
+      # A fixed "latest-build" release gives a stable link that opens in a phone browser:
+      # https://github.com/<owner>/<repo>/releases/download/latest-build/VibeNotes.apk
+      - name: Move latest-build tag
+        if: github.event_name != 'pull_request'
+        run: |
+          git tag -f latest-build
+          git push -f origin latest-build
+
+      - name: Publish latest build
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Последняя сборка
+          body: |
+            Debug-сборка с коммита ${{ github.sha }} (ветка ${{ github.ref_name }}).
+            Скачать на телефон: VibeNotes.apk ниже. Ставится поверх предыдущей версии.
+          prerelease: false
+          make_latest: true
+          files: VibeNotes.apk
+          overwrite_files: true
+
+      # Last, so phones only learn about a version once its APK is already in place.
+      - name: Publish version manifest
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload latest-build version.json --clobber --repo ${{ github.repository }}
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: core/build/reports/tests

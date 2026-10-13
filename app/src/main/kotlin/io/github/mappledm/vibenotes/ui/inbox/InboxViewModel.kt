@@ -1,0 +1,208 @@
+package io.github.mappledm.vibenotes.ui.inbox
+
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import io.github.mappledm.vibenotes.AppContainer
+import io.github.mappledm.vibenotes.core.agent.ActionProposal
+import io.github.mappledm.vibenotes.core.agent.BoardInfo
+import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
+import io.github.mappledm.vibenotes.core.inbox.ChatEntry
+import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+
+class InboxViewModel(private val container: AppContainer) : ViewModel() {
+    private val vault = container.requireVault()
+    private val inbox = vault.inbox
+
+    val entries: StateFlow<List<ChatEntry>> = inbox.entries
+    val aiConfigured: StateFlow<Boolean> = container.secrets.hasApiKey
+
+    var composer by mutableStateOf(TextFieldValue(""))
+        private set
+
+    private val _generating = MutableStateFlow(false)
+    val generating: StateFlow<Boolean> = _generating.asStateFlow()
+
+    private val _calendars = MutableStateFlow<List<CalendarInfo>>(emptyList())
+    val calendars: StateFlow<List<CalendarInfo>> = _calendars.asStateFlow()
+
+    val boards: StateFlow<List<BoardInfo>> = vault.notes.index
+        .map { index ->
+            index.boards.mapNotNull { meta ->
+                val content = vault.notes.cachedContent(meta.path) ?: return@mapNotNull null
+                BoardInfo(meta.path, meta.title, KanbanFormat.parse(content).lanes.map { it.title })
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private var job: Job? = null
+
+    init {
+        loadCalendars()
+        viewModelScope.launch {
+            container.pendingShare.collect { shared ->
+                if (shared != null) {
+                    val prefix = if (composer.text.isBlank()) "" else composer.text.trimEnd() + "\n"
+                    val text = prefix + shared
+                    composer = TextFieldValue(text, TextRange(text.length))
+                    container.pendingShare.value = null
+                }
+            }
+        }
+    }
+
+    fun onComposerChange(value: TextFieldValue) {
+        composer = value
+    }
+
+    fun appendToComposer(text: String) {
+        val current = composer.text
+        val joined = if (current.isBlank()) text else current.trimEnd() + " " + text
+        composer = TextFieldValue(joined, TextRange(joined.length))
+    }
+
+    fun useSuggestion(text: String) {
+        composer = TextFieldValue(text, TextRange(text.length))
+    }
+
+    fun send() {
+        val text = composer.text.trim()
+        if (text.isEmpty() || _generating.value) return
+        composer = TextFieldValue("")
+        job = viewModelScope.launch(Dispatchers.Default) {
+            _generating.value = true
+            try {
+                inbox.send(text)
+            } finally {
+                _generating.value = false
+            }
+        }
+    }
+
+    fun stop() {
+        job?.cancel()
+    }
+
+    fun retry(entryId: String) {
+        if (_generating.value) return
+        job = viewModelScope.launch(Dispatchers.Default) {
+            _generating.value = true
+            try {
+                inbox.retry(entryId)
+            } finally {
+                _generating.value = false
+            }
+        }
+    }
+
+    fun hasCalendarPermission(): Boolean = container.calendar.hasPermission()
+
+    fun confirm(entryId: String, proposalId: String) {
+        viewModelScope.launch(Dispatchers.Default) {
+            applySavedCalendar(entryId, proposalId)
+            inbox.confirm(entryId, proposalId)
+        }
+    }
+
+    private fun savedCalendar(calendars: List<CalendarInfo>): Long? =
+        container.settings.current.defaultCalendarId?.takeIf { id -> calendars.any { it.id == id } }
+
+    /** An event without a valid calendar goes to the calendar the user chose earlier. */
+    private suspend fun applySavedCalendar(entryId: String, proposalId: String) {
+        val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return
+        val event = item.proposal as? ActionProposal.CreateEvent ?: return
+        val calendars = _calendars.value
+        if (calendars.any { it.id == event.calendarId }) return
+        val saved = savedCalendar(calendars) ?: return
+        inbox.edit(entryId, proposalId, event.copy(calendarId = saved))
+    }
+
+    fun dismiss(entryId: String, proposalId: String) {
+        viewModelScope.launch { inbox.dismiss(entryId, proposalId) }
+    }
+
+    fun edit(entryId: String, proposalId: String, proposal: ActionProposal, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            onResult(inbox.edit(entryId, proposalId, proposal))
+        }
+    }
+
+    fun loadCalendars() {
+        if (!container.calendar.hasPermission()) return
+        viewModelScope.launch { fetchCalendars() }
+    }
+
+    private suspend fun fetchCalendars(): List<CalendarInfo> {
+        val list = runCatching { container.calendar.writableCalendars() }.getOrDefault(emptyList())
+        _calendars.value = list
+        return list
+    }
+
+    /**
+     * The user picked a calendar on a card: use it for this event and remember it,
+     * so the next events go to the same account without asking.
+     */
+    fun chooseCalendar(entryId: String, proposalId: String, calendarId: Long) {
+        container.settings.setDefaultCalendar(calendarId)
+        viewModelScope.launch {
+            val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return@launch
+            val event = item.proposal as? ActionProposal.CreateEvent ?: return@launch
+            inbox.edit(entryId, proposalId, event.copy(calendarId = calendarId))
+        }
+    }
+
+    /** True when the event cannot be added before the user says which calendar to use. */
+    fun needsCalendarChoice(proposal: ActionProposal, calendars: List<CalendarInfo>): Boolean =
+        proposal is ActionProposal.CreateEvent &&
+            calendars.size > 1 &&
+            calendars.none { it.id == proposal.calendarId } &&
+            savedCalendar(calendars) == null
+
+    /** Calendar the card should display for [proposal]. */
+    fun effectiveCalendar(proposal: ActionProposal.CreateEvent, calendars: List<CalendarInfo>): CalendarInfo? =
+        calendars.firstOrNull { it.id == proposal.calendarId }
+            ?: savedCalendar(calendars)?.let { id -> calendars.firstOrNull { it.id == id } }
+            ?: calendars.singleOrNull()
+
+    /** After the permission dialog: confirm right away unless a calendar still has to be chosen. */
+    fun afterPermission(entryId: String, proposalId: String, granted: Boolean) {
+        viewModelScope.launch {
+            if (!granted) {
+                inbox.confirm(entryId, proposalId)
+                return@launch
+            }
+            val calendars = fetchCalendars()
+            val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return@launch
+            val event = item.proposal as? ActionProposal.CreateEvent ?: return@launch
+            val saved = savedCalendar(calendars)
+            when {
+                calendars.any { it.id == event.calendarId } -> inbox.confirm(entryId, proposalId)
+                saved != null -> {
+                    inbox.edit(entryId, proposalId, event.copy(calendarId = saved))
+                    inbox.confirm(entryId, proposalId)
+                }
+                calendars.size == 1 -> {
+                    inbox.edit(entryId, proposalId, event.copy(calendarId = calendars.single().id))
+                    inbox.confirm(entryId, proposalId)
+                }
+                // Several accounts: leave the card pending — it now shows the calendar picker.
+                else -> Unit
+            }
+        }
+    }
+
+    fun resolveNote(target: String): String? = vault.notes.resolveLink(target)?.path
+}
