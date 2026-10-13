@@ -30,6 +30,8 @@ data class ProposalItem(
     val resultMessage: String? = null,
     val target: ResultTarget? = null,
     val needsPermission: Boolean = false,
+    /** Applied without a card because the user enabled auto-apply for this kind. */
+    val autoApplied: Boolean = false,
 )
 
 @Serializable
@@ -43,6 +45,10 @@ data class ChatEntry(
     val error: String? = null,
     /** The answer claimed an action in text without proposing one; kept out of the model's history. */
     val unverifiedClaim: Boolean = false,
+    /** A "/command" handled locally; never sent to the model. */
+    val isCommand: Boolean = false,
+    /** An "under the hood" trace is stored for this answer. */
+    val hasTrace: Boolean = false,
     /** True while the answer is being generated; never persisted. */
     @Transient val streaming: Boolean = false,
 )

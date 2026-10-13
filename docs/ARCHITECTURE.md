@@ -24,9 +24,11 @@ core (Kotlin/JVM, без Android)
 │             MarkdownBlocks/MarkdownInline (режим просмотра), MarkdownHighlighter (подсветка)
 ├── ai        LlmClient + OpenAiCompatibleClient (SSE-стриминг, tool calls, отмена, ошибки)
 ├── agent     AgentTool, ToolRegistry, AssistantEngine (цикл модели), SystemPrompt,
-│             ActionProposal, ActionExecutor (выполнение после подтверждения)
+│             ActionProposal, ActionExecutor (выполнение после подтверждения),
+│             AgentOptions (температура, шаги, выключенные инструменты, AGENTS.md), AgentTrace
 ├── calendar  CalendarGateway (интерфейс)
-└── inbox     ChatStore (история чата), InboxService (сценарии чата)
+├── privacy   AiIgnore (правила .aiignore)
+└── inbox     ChatStore (история чата), InboxService (сценарии чата), SlashCommands, TraceStore
 
 app (Android)
 ├── data      SafFileStore (SAF через DocumentsContract), AndroidCalendarGateway, SecretStore (Keystore),
@@ -52,6 +54,9 @@ UI, бизнес-логика и сеть разделены: экраны за�
 - Аргументы валидируются (`ProposalValidator`). Ошибка уходит обратно модели, а не в карточку.
 - После вставки событие перечитывается из Calendar Provider. Успех показывается только если оно там есть.
 - Защита от prompt injection: всё из заметок и календаря оборачивается в `<untrusted_data>`, и закрыть обёртку изнутри нельзя. Системный промпт запрещает исполнять инструкции оттуда. Изменения в любом случае требуют подтверждения.
+- Каждый ответ записывает `AgentTrace`: системный промпт, отправленные сообщения, список инструментов и шаги (время, токены, вызовы с аргументами и ответами). `TraceStore` держит последние 30 трасс в файле приложения, наружу они не уходят. В UI это «Под капотом».
+- Команды `/…` разбирает `SlashCommands`. Команды с данными (`/задача`, `/заметка`, `/входящие`, `/найти`) идут напрямую в `ActionExecutor` и `NotesRepository`, модель не вызывается. Навигационные команды возвращаются экрану.
+- «Без подтверждения» — явное правило пользователя по виду действия (`ProposalKind`). Оно проходит через тот же `ActionExecutor` с проверкой результата. Событие без выбранного календаря всё равно ждёт карточку.
 - Относительные даты: в промпт добавлена таблица ближайших 14 дней с днями недели (RU и EN). Без неё LLM часто ошибается с «в четверг».
 
 ## Хранение

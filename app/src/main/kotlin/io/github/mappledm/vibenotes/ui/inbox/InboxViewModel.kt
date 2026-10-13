@@ -9,13 +9,20 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
+import io.github.mappledm.vibenotes.core.agent.AgentTrace
+import io.github.mappledm.vibenotes.core.inbox.CommandAction
+import io.github.mappledm.vibenotes.core.inbox.SlashCommand
+import io.github.mappledm.vibenotes.core.inbox.SlashCommands
 import io.github.mappledm.vibenotes.core.agent.BoardInfo
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.inbox.ChatEntry
 import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -29,6 +36,7 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
 
     val entries: StateFlow<List<ChatEntry>> = inbox.entries
     val aiConfigured: StateFlow<Boolean> = container.secrets.hasApiKey
+    val settings = container.settings.state
 
     var composer by mutableStateOf(TextFieldValue(""))
         private set
@@ -78,9 +86,61 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
         composer = TextFieldValue(text, TextRange(text.length))
     }
 
+    // --- "/commands" and "under the hood" -------------------------------------------------
+
+    private val _commandEvents = MutableSharedFlow<CommandAction>(extraBufferCapacity = 4)
+    /** Navigation commands the screen has to perform (open week, settings, …). */
+    val commandEvents: SharedFlow<CommandAction> = _commandEvents.asSharedFlow()
+
+    val suggestions: List<SlashCommand> get() = SlashCommands.suggestions(composer.text)
+
+    var trace by mutableStateOf<AgentTrace?>(null)
+        private set
+
+    fun showTrace(entryId: String) {
+        viewModelScope.launch { trace = inbox.trace(entryId) }
+    }
+
+    fun showLatestTrace() {
+        viewModelScope.launch {
+            val id = inbox.latestTraceId()
+            trace = id?.let { inbox.trace(it) }
+        }
+    }
+
+    fun closeTrace() {
+        trace = null
+    }
+
+    /** Picks a command from the suggestions: fills it in, or runs it when it needs no text. */
+    fun pickCommand(command: SlashCommand) {
+        if (command.takesArgument) {
+            val text = "/${command.name} "
+            composer = TextFieldValue(text, TextRange(text.length))
+        } else {
+            composer = TextFieldValue("/${command.name}")
+            send()
+        }
+    }
+
+    private fun runCommand(text: String) {
+        composer = TextFieldValue("")
+        viewModelScope.launch(Dispatchers.Default) {
+            when (val action = inbox.runCommand(text)) {
+                CommandAction.SHOW_TRACE -> showLatestTrace()
+                null -> Unit
+                else -> _commandEvents.emit(action)
+            }
+        }
+    }
+
     fun send() {
         val text = composer.text.trim()
         if (text.isEmpty() || _generating.value) return
+        if (SlashCommands.parse(text) != null) {
+            runCommand(text)
+            return
+        }
         composer = TextFieldValue("")
         job = viewModelScope.launch(Dispatchers.Default) {
             _generating.value = true

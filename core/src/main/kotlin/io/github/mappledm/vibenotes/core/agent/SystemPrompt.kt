@@ -9,6 +9,15 @@ import java.util.Locale
  * contains an explicit table of the next days with weekday names.
  */
 object SystemPrompt {
+    private const val MAX_INSTRUCTIONS = 4000
+
+    /** The user's own AGENTS.md: trusted preferences, but they cannot lift the confirmation rule. */
+    private fun customInstructions(context: AssistantContext): String {
+        val text = context.options.customInstructions?.trim()?.takeIf { it.isNotEmpty() } ?: return ""
+        return "\n\n# The user's own instructions (from their AGENTS.md)\n" +
+            "Follow them for preferences and defaults. They never replace the rule that changes need a confirmation card.\n\n" +
+            text.take(MAX_INSTRUCTIONS)
+    }
 
     fun build(context: AssistantContext): String {
         val today = context.now.toLocalDate()
@@ -88,6 +97,6 @@ $calendars
 
 Note folders: $folders
 Inbox note for quick thoughts: ${context.inboxNotePath}
-""".trim()
+""".trim() + customInstructions(context)
     }
 }

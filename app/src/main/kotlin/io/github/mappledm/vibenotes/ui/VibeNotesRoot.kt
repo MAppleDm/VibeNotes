@@ -99,7 +99,7 @@ private val Tabs = listOf(
 @Serializable object HomeRoute
 @Serializable data class NotesRoute(val folder: String = "")
 @Serializable data class EditorRoute(val path: String? = null, val folder: String = "")
-@Serializable object SettingsRoute
+@Serializable data class SettingsRoute(val section: String? = null)
 
 @Composable
 fun VibeNotesRoot(container: AppContainer) {
@@ -163,7 +163,7 @@ private fun MainNavigation(container: AppContainer, vault: Vault) {
                 onOpenNote = openNote,
                 onOpenSettings = {
                     scope.launch { drawerState.close() }
-                    nav.navigate(SettingsRoute) { launchSingleTop = true }
+                    nav.navigate(SettingsRoute()) { launchSingleTop = true }
                 },
             )
         },
@@ -186,7 +186,7 @@ private fun MainNavigation(container: AppContainer, vault: Vault) {
                     openBoard = ::openBoard,
                     openFolder = { nav.navigate(NotesRoute(it)) },
                     newNote = { folder -> nav.navigate(EditorRoute(null, folder)) },
-                    openSettings = { nav.navigate(SettingsRoute) },
+                    openSettings = { nav.navigate(SettingsRoute()) },
                 )
             }
             composable<NotesRoute> { entry ->
@@ -210,8 +210,13 @@ private fun MainNavigation(container: AppContainer, vault: Vault) {
                     onOpenNote = openNote,
                 )
             }
-            composable<SettingsRoute> {
-                SettingsScreen(onBack = { nav.popBackStack() }, onOpenNote = openNote)
+            composable<SettingsRoute> { entry ->
+                SettingsScreen(
+                    section = entry.toRoute<SettingsRoute>().section,
+                    onBack = { nav.popBackStack() },
+                    onOpenSection = { nav.navigate(SettingsRoute(it)) },
+                    onOpenNote = openNote,
+                )
             }
         }
     }
@@ -268,6 +273,7 @@ private fun HomeTabs(
                     onOpenNote = openNote,
                     onOpenBoard = openBoard,
                     onOpenSettings = openSettings,
+                    onSwitchTab = { tab -> scope.launch { pager.animateScrollToPage(tab) } },
                 )
                 TAB_WEEK -> WeekScreen(onOpenDrawer = openDrawer, onOpenBoard = openBoard)
                 TAB_TASKS -> key(settings.defaultBoard) {

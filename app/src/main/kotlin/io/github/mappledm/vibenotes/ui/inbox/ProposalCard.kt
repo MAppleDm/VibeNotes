@@ -180,7 +180,16 @@ private fun Footer(
         ProposalStatus.APPLIED -> Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.CheckCircle, null, Modifier.size(18.dp), tint = LocalExtraColors.current.success)
             Spacer(Modifier.width(8.dp))
-            Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            Column(Modifier.weight(1f)) {
+                Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium)
+                if (item.autoApplied) {
+                    Text(
+                        "Выполнено автоматически (настройки → Для продвинутых)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (item.target != null) {
                 TextButton(onClick = onOpen) { Text(if (item.target is ResultTarget.Event) "В календаре" else "Открыть") }
             }

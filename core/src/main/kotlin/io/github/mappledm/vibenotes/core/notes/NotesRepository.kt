@@ -91,6 +91,12 @@ class NotesRepository(private val store: FileStore) {
         publish(loaded = true)
     }
 
+    /** Forgets the index and reads every file again (for "something looks stale"). */
+    suspend fun reindex(): VaultIndex {
+        mutex.withLock { cache.clear() }
+        return refresh()
+    }
+
     private fun publish(loaded: Boolean, extra: List<NoteMeta> = emptyList()): VaultIndex {
         val rules = aiIgnore
         val known = cache.values.map { it.meta }

@@ -45,6 +45,7 @@ data class AssistantContext(
     val defaultCalendarId: Long?,
     val defaultEventMinutes: Int,
     val defaultReminderMinutes: Int?,
+    val options: AgentOptions = AgentOptions(),
 )
 
 interface AgentTool {

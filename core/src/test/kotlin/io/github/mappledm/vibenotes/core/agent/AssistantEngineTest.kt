@@ -102,7 +102,8 @@ class AssistantEngineTest {
     fun stepLimitIsEnforced() = runTest {
         val loop = Array(5) { ScriptedLlm.calls("list_tasks" to "{}") }
         val llm = ScriptedLlm(*loop)
-        val events = AssistantEngine(llm, registry, maxSteps = 5).run(config, testContext(), emptyList(), "x").toList()
+        val context = testContext().copy(options = AgentOptions(maxSteps = 5))
+        val events = AssistantEngine(llm, registry).run(config, context, emptyList(), "x").toList()
         assertEquals(5, llm.requests.size)
         assertTrue(events.filterIsInstance<AssistantEvent.Activity>().any { it.activity.kind == ActivityKind.ERROR })
     }

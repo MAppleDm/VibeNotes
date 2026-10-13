@@ -49,8 +49,11 @@ sealed interface LlmEvent {
         val toolCalls: List<ToolCallRequest>,
         val finishReason: String?,
         val reasoning: String = "",
+        val usage: TokenUsage? = null,
     ) : LlmEvent
 }
+
+data class TokenUsage(val promptTokens: Int?, val completionTokens: Int?, val cachedTokens: Int?)
 
 /** Streaming chat completion. Cancelling the collecting coroutine aborts the HTTP call. */
 interface LlmClient {

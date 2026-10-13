@@ -7,6 +7,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
+import io.github.mappledm.vibenotes.core.agent.AgentTool
 import io.github.mappledm.vibenotes.core.ai.LlmEvent
 import io.github.mappledm.vibenotes.core.ai.LlmException
 import io.github.mappledm.vibenotes.core.ai.LlmMessage
@@ -14,10 +15,11 @@ import io.github.mappledm.vibenotes.core.ai.LlmRequest
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.ai.Role
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
+import io.github.mappledm.vibenotes.core.notes.VaultIndex
 import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.data.AppSettings
-import io.github.mappledm.vibenotes.data.StorageLocation
 import io.github.mappledm.vibenotes.data.Palette
+import io.github.mappledm.vibenotes.data.StorageLocation
 import io.github.mappledm.vibenotes.data.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,10 +32,16 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<AppSettings> = container.settings.state
     val hasKey: StateFlow<Boolean> = container.secrets.hasApiKey
     val vaultName: String = container.vault.value?.name ?: "—"
+    val index: StateFlow<VaultIndex>? = container.vault.value?.notes?.index
+    val tools: List<AgentTool> = container.vault.value?.tools?.tools.orEmpty()
 
     var testing by mutableStateOf(false)
         private set
     var testResult by mutableStateOf<Pair<Boolean, String>?>(null)
+        private set
+    var systemPrompt by mutableStateOf<String?>(null)
+        private set
+    var notice by mutableStateOf<String?>(null)
         private set
 
     private val _calendars = MutableStateFlow<List<CalendarInfo>>(emptyList())
@@ -52,12 +60,15 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
+    // --- AI provider --------------------------------------------------------------------
+
     fun saveProvider(baseUrl: String, model: String, newKey: String) {
         container.settings.setProvider(baseUrl, model)
         if (newKey.isNotBlank()) {
             viewModelScope.launch(Dispatchers.IO) { container.secrets.saveApiKey(newKey) }
         }
         testResult = null
+        notice = "Сохранено"
     }
 
     fun removeKey() {
@@ -91,27 +102,94 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun setHistorySize(value: Int) = container.settings.setHistorySize(value)
+    // --- simple settings ----------------------------------------------------------------
+
     fun setTheme(mode: ThemeMode) = container.settings.setTheme(mode)
     fun setPalette(palette: Palette) = container.settings.setPalette(palette)
     fun setDefaultCalendar(id: Long?) = container.settings.setDefaultCalendar(id)
     fun setEventMinutes(value: Int) = container.settings.setEventMinutes(value)
     fun setReminder(value: Int?) = container.settings.setReminderMinutes(value)
+    fun setDefaultBoard(path: String) = container.settings.setDefaultBoard(path)
+    fun setInboxNote(path: String) {
+        val clean = path.trim().ifEmpty { return }
+        container.settings.setInboxNote(if (clean.endsWith(".md")) clean else "$clean.md")
+        notice = "Сохранено"
+    }
 
     fun chooseFolder(uri: Uri) = container.chooseStorage(StorageLocation.Folder(uri.toString()))
     fun useInternalStorage() = container.chooseStorage(StorageLocation.Internal)
 
-    /** Creates .aiignore with a short how-to if needed and returns its path for the editor. */
-    fun openAiIgnore(onReady: (String) -> Unit) {
+    fun reindex() {
         val notes = container.vault.value?.notes ?: return
         viewModelScope.launch {
-            runCatching {
-                if (notes.read(AiIgnore.FILE_NAME) == null) notes.save(AiIgnore.FILE_NAME, AiIgnore.HEADER + "\n")
-            }.onSuccess { onReady(AiIgnore.FILE_NAME) }
+            notice = runCatching { notes.reindex() }
+                .fold({ "Файлы перечитаны: ${it.notes.size} заметок" }, { "Не удалось: ${it.message}" })
         }
     }
 
-    fun clearChat() {
-        viewModelScope.launch { container.vault.value?.inbox?.clear() }
+    /** Creates a service file with a template if needed and returns its path for the editor. */
+    private fun openFile(path: String, template: String, onReady: (String) -> Unit) {
+        val notes = container.vault.value?.notes ?: return
+        viewModelScope.launch {
+            runCatching { if (notes.read(path) == null) notes.save(path, template) }
+                .onSuccess { onReady(path) }
+                .onFailure { notice = it.message ?: "Не удалось открыть файл" }
+        }
     }
+
+    fun openAiIgnore(onReady: (String) -> Unit) = openFile(AiIgnore.FILE_NAME, AiIgnore.HEADER + "\n", onReady)
+
+    fun openInstructions(onReady: (String) -> Unit) = openFile(
+        settings.value.instructionsFile,
+        """
+        # Инструкции для ассистента
+
+        Этот файл ассистент читает перед каждым ответом (если включено в настройках).
+        Пишите правила и факты о себе обычным языком, например:
+
+        - Мой рабочий день: 9:00–18:00, по выходным встречи не ставь.
+        - «Врач» — это поликлиника №3 на Кирова, 38.
+        - Встречи с Андреем всегда по 30 минут.
+        - Покупки клади на доску «Покупки».
+        """.trimIndent() + "\n",
+        onReady,
+    )
+
+    // --- advanced -----------------------------------------------------------------------
+
+    fun setTemperature(value: Float) = container.settings.setTemperature(value)
+    fun setMaxSteps(value: Int) = container.settings.setMaxSteps(value)
+    fun setHistorySize(value: Int) = container.settings.setHistorySize(value)
+    fun setToolEnabled(name: String, enabled: Boolean) = container.settings.setToolEnabled(name, enabled)
+    fun setAutoApply(kind: String, enabled: Boolean) = container.settings.setAutoApply(kind, enabled)
+    fun setUseInstructions(value: Boolean) = container.settings.setUseInstructions(value)
+    fun setShowDetails(value: Boolean) = container.settings.setShowDetails(value)
+
+    fun resetAdvanced() {
+        container.settings.resetAdvanced()
+        notice = "Продвинутые настройки сброшены"
+    }
+
+    fun loadSystemPrompt() {
+        viewModelScope.launch { systemPrompt = container.previewSystemPrompt() ?: "Хранилище не выбрано" }
+    }
+
+    fun closeSystemPrompt() {
+        systemPrompt = null
+    }
+
+    fun clearChat() {
+        viewModelScope.launch {
+            container.vault.value?.inbox?.clear()
+            notice = "История чата и детали запросов очищены"
+        }
+    }
+
+    fun noticeShown() {
+        notice = null
+    }
+
+    val appVersion: String = runCatching {
+        container.app.packageManager.getPackageInfo(container.app.packageName, 0).versionName
+    }.getOrNull() ?: "—"
 }

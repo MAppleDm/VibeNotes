@@ -113,6 +113,8 @@ class OpenAiCompatibleClient(
             val json = buildJsonObject {
                 put("model", config.model)
                 put("stream", stream)
+                // Token counts for the "under the hood" view (DeepSeek, OpenAI and OpenRouter support it).
+                if (stream) put("stream_options", buildJsonObject { put("include_usage", true) })
                 request.temperature?.let { put("temperature", it) }
                 request.maxTokens?.let { put("max_tokens", it) }
                 put("messages", buildJsonArray { request.messages.forEach { add(encodeMessage(it)) } })
@@ -165,6 +167,7 @@ internal class StreamAssembler {
     private val reasoning = StringBuilder()
     private val calls = sortedMapOf<Int, PartialCall>()
     private var finishReason: String? = null
+    private var usage: TokenUsage? = null
 
     fun accept(data: String): List<LlmEvent> {
         val root = try {
@@ -177,6 +180,15 @@ internal class StreamAssembler {
             throw LlmException(LlmException.Kind.SERVER, "Ошибка провайдера: $msg")
         }
         val events = mutableListOf<LlmEvent>()
+        (root["usage"] as? JsonObject)?.let { u ->
+            fun int(key: String) = (u[key] as? JsonPrimitive)?.intOrNull
+            usage = TokenUsage(
+                promptTokens = int("prompt_tokens"),
+                completionTokens = int("completion_tokens"),
+                cachedTokens = int("prompt_cache_hit_tokens")
+                    ?: ((u["prompt_tokens_details"] as? JsonObject)?.get("cached_tokens") as? JsonPrimitive)?.intOrNull,
+            )
+        }
         val choices = root["choices"].asArray() ?: return events
         for (choice in choices) {
             val obj = choice as? JsonObject ?: continue
@@ -214,6 +226,7 @@ internal class StreamAssembler {
         },
         finishReason = finishReason,
         reasoning = reasoning.toString(),
+        usage = usage,
     )
 
     private fun JsonElement?.asString(): String? = when (this) {

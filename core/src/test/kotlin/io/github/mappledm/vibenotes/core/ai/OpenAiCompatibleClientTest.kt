@@ -43,12 +43,15 @@ class OpenAiCompatibleClientTest {
             sse(
                 """{"choices":[{"index":0,"delta":{"role":"assistant","content":"При"}}]}""",
                 """{"choices":[{"index":0,"delta":{"content":"вет"},"finish_reason":"stop"}]}""",
+                """{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":3,"prompt_cache_hit_tokens":0}}""",
             ),
         )
         val events = client.stream(config(), LlmRequest(listOf(LlmMessage(Role.USER, "hi")))).toList()
         assertEquals(listOf("При", "вет"), events.filterIsInstance<LlmEvent.TextDelta>().map { it.text })
         val done = events.last() as LlmEvent.Completed
         assertEquals("Привет", done.text)
+        assertEquals(12, done.usage?.promptTokens)
+        assertEquals(3, done.usage?.completionTokens)
         assertEquals("stop", done.finishReason)
 
         val request = server.takeRequest()
@@ -57,6 +60,7 @@ class OpenAiCompatibleClientTest {
         val body = Json.parseToJsonElement(request.body.readUtf8()).jsonObject
         assertEquals("deepseek-chat", body["model"]!!.jsonPrimitive.content)
         assertEquals("true", body["stream"]!!.jsonPrimitive.content)
+        assertEquals("true", body["stream_options"]!!.jsonObject["include_usage"]!!.jsonPrimitive.content)
     }
 
     @Test
