@@ -41,6 +41,8 @@ data class ChatEntry(
     val activities: List<ToolActivity> = emptyList(),
     val proposals: List<ProposalItem> = emptyList(),
     val error: String? = null,
+    /** The answer claimed an action in text without proposing one; kept out of the model's history. */
+    val unverifiedClaim: Boolean = false,
     /** True while the answer is being generated; never persisted. */
     @Transient val streaming: Boolean = false,
 )

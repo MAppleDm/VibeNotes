@@ -53,6 +53,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
+import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
 import io.github.mappledm.vibenotes.ui.components.ReminderOptions
 import io.github.mappledm.vibenotes.ui.components.Selector
@@ -213,6 +214,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenNote: (String) -> Unit) {
             }
 
             Section("Оформление")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(Palette.LEMON_COFFEE to "Лимон и кофе", Palette.GRAPHITE to "Графит").forEach { (palette, label) ->
+                    FilterChip(selected = settings.palette == palette, onClick = { vm.setPalette(palette) }, label = { Text(label) })
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(ThemeMode.SYSTEM to "Как в системе", ThemeMode.LIGHT to "Светлая", ThemeMode.DARK to "Тёмная").forEach { (mode, label) ->
                     FilterChip(selected = settings.theme == mode, onClick = { vm.setTheme(mode) }, label = { Text(label) })

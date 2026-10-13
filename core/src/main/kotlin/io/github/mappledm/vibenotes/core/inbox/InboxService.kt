@@ -7,6 +7,8 @@ import io.github.mappledm.vibenotes.core.agent.AssistantContext
 import io.github.mappledm.vibenotes.core.agent.AssistantEngine
 import io.github.mappledm.vibenotes.core.agent.AssistantEvent
 import io.github.mappledm.vibenotes.core.agent.ConversationTurn
+import io.github.mappledm.vibenotes.core.agent.PastAction
+import io.github.mappledm.vibenotes.core.agent.toolCall
 import io.github.mappledm.vibenotes.core.agent.ProposalValidator
 import io.github.mappledm.vibenotes.core.ai.LlmException
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
@@ -79,11 +81,26 @@ class InboxService(
                     is AssistantEvent.Proposal -> store.update(entryId, persist = false) {
                         it.copy(proposals = it.proposals + ProposalItem(newId(), event.proposal))
                     }
-                    is AssistantEvent.Finished -> store.update(entryId) { entry ->
-                        val finalText = event.text.ifBlank {
-                            if (entry.proposals.isEmpty()) "Модель вернула пустой ответ." else ""
+                    is AssistantEvent.Finished -> {
+                        var claimed = false
+                        store.update(entryId) { entry ->
+                            val finalText = event.text.ifBlank {
+                                if (entry.proposals.isEmpty()) "Модель вернула пустой ответ." else ""
+                            }
+                            // Safety net: the text says something was done, but no action was proposed.
+                            claimed = entry.proposals.isEmpty() && entry.activities.isEmpty() && claimsCompletion(finalText)
+                            entry.copy(text = finalText, streaming = false, unverifiedClaim = claimed)
                         }
-                        entry.copy(text = finalText, streaming = false)
+                        if (claimed) {
+                            store.add(
+                                ChatEntry(
+                                    newId(), ChatRole.NOTICE,
+                                    "Ничего не добавлено: ассистент написал об этом текстом, но не предложил действие. " +
+                                        "Отправьте запрос ещё раз — должна появиться карточка для подтверждения.",
+                                    now().toInstant().toEpochMilli(),
+                                ),
+                            )
+                        }
                     }
                 }
             }
@@ -143,30 +160,44 @@ class InboxService(
 
     suspend fun clear() = store.clear()
 
-    /** Recent turns for the model; proposals are summarised so follow-ups ("move it to 10") work. */
+    /**
+     * Recent turns for the model. Proposals are replayed as real tool calls with their outcome
+     * (confirmed / dismissed / failed), so follow-ups like "move it to 10" work and the model
+     * never sees actions written as text it could imitate.
+     */
     internal fun buildHistory(entries: List<ChatEntry>): List<ConversationTurn> =
-        entries.filter { it.role != ChatRole.NOTICE && it.error == null && !it.streaming }
+        entries.filter { it.role != ChatRole.NOTICE && it.error == null && !it.streaming && !it.unverifiedClaim }
+            // Older answers stored before the flag existed: same check, applied retroactively.
+            .filterNot { it.role == ChatRole.ASSISTANT && it.proposals.isEmpty() && it.activities.isEmpty() && claimsCompletion(it.text) }
             .takeLast(historySize())
             .mapNotNull { entry ->
                 when (entry.role) {
                     ChatRole.USER -> ConversationTurn(Role.USER, entry.text)
                     ChatRole.ASSISTANT -> {
-                        val cards = entry.proposals.joinToString("\n") { "[${ProposalText.summary(it.proposal)} — ${statusText(it)}]" }
-                        val text = listOf(entry.text, cards).filter { it.isNotBlank() }.joinToString("\n")
-                        if (text.isBlank()) null else ConversationTurn(Role.ASSISTANT, text)
+                        val actions = entry.proposals.map { item ->
+                            val (tool, args) = item.proposal.toolCall()
+                            PastAction(tool, args, outcomeText(item))
+                        }
+                        if (entry.text.isBlank() && actions.isEmpty()) null else ConversationTurn(Role.ASSISTANT, entry.text, actions)
                     }
                     ChatRole.NOTICE -> null
                 }
             }
 
-    private fun statusText(item: ProposalItem): String = when (item.status) {
-        ProposalStatus.PENDING -> "ждёт подтверждения"
-        ProposalStatus.APPLYING -> "выполняется"
-        ProposalStatus.APPLIED -> "выполнено"
-        ProposalStatus.DISMISSED -> "отклонено пользователем"
-        ProposalStatus.FAILED -> "ошибка: ${item.resultMessage}"
+    private fun outcomeText(item: ProposalItem): String = when (item.status) {
+        ProposalStatus.PENDING, ProposalStatus.APPLYING ->
+            "Shown to the user as a card; NOT confirmed yet, nothing was created."
+        ProposalStatus.APPLIED -> "The user confirmed and the app completed it: ${item.resultMessage ?: "done"}."
+        ProposalStatus.DISMISSED -> "The user dismissed the card. Nothing was created."
+        ProposalStatus.FAILED -> "Failed: ${item.resultMessage ?: "error"}. Nothing was created."
     }
+
 }
+
+private val completionClaim =
+    Regex("""(?i)(выполнено|добавил|добавлено|добавлена|создал|создано|создана|запланировал|запланировано|поставил|сохранил|сохранено|внёс|занёс|done|created|added|scheduled)""")
+
+internal fun claimsCompletion(text: String): Boolean = completionClaim.containsMatchIn(text)
 
 object ProposalText {
     fun summary(p: ActionProposal): String = when (p) {

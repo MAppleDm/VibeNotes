@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -131,7 +132,7 @@ class InboxServiceTest {
     }
 
     @Test
-    fun historySummarisesProposals() = runTest {
+    fun historyReplaysProposalsAsToolCalls() = runTest {
         val llm = ScriptedLlm(ScriptedLlm.calls("add_task" to """{"title":"Позвонить маме"}"""))
         val (inbox, _) = service(llm, config)
         inbox.send("позвонить маме")
@@ -140,8 +141,39 @@ class InboxServiceTest {
 
         val history = inbox.buildHistory(inbox.entries.value)
         assertEquals(listOf(Role.USER, Role.ASSISTANT), history.map { it.role })
-        assertTrue(history[1].text.contains("задача «Позвонить маме»"))
-        assertTrue(history[1].text.contains("отклонено"))
+        val action = history[1].actions.single()
+        assertEquals("add_task", action.toolName)
+        assertTrue(action.argumentsJson.contains("Позвонить маме"))
+        assertTrue(action.outcome.contains("dismissed"))
+        // No bracketed pseudo-results in the text the model could imitate.
+        assertFalse(history[1].text.contains("["))
+    }
+
+    @Test
+    fun textOnlyClaimOfAnActionIsFlaggedAndKeptOutOfHistory() = runTest {
+        // What DeepSeek did on the device: wrote the action as text instead of calling a tool.
+        val llm = ScriptedLlm(ScriptedLlm.text("[событие «Анализы» 2026-10-14 09:30–10:30 — выполнено]"))
+        val (inbox, _) = service(llm, config)
+        inbox.send("Анализы 9:30 среда")
+
+        val entries = inbox.entries.value
+        val answer = entries.first { it.role == ChatRole.ASSISTANT }
+        assertTrue(answer.unverifiedClaim)
+        assertTrue(answer.proposals.isEmpty())
+        assertTrue(entries.last().role == ChatRole.NOTICE && entries.last().text.startsWith("Ничего не добавлено"))
+        assertEquals(listOf(Role.USER), inbox.buildHistory(entries).map { it.role })
+    }
+
+    @Test
+    fun answersAfterReadingToolsAreNotFlagged() = runTest {
+        val llm = ScriptedLlm(
+            ScriptedLlm.calls("list_tasks" to "{}"),
+            ScriptedLlm.text("Задачи на сегодня уже добавлены, всё на месте."),
+        )
+        val (inbox, _) = service(llm, config)
+        inbox.send("что по задачам?")
+        assertFalse(inbox.entries.value.last { it.role == ChatRole.ASSISTANT }.unverifiedClaim)
+        assertTrue(inbox.entries.value.none { it.role == ChatRole.NOTICE })
     }
 
     @Test

@@ -1,7 +1,8 @@
 package io.github.mappledm.vibenotes.ui.kanban
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,21 +11,24 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
@@ -35,6 +39,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,15 +58,20 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -69,27 +79,39 @@ import io.github.mappledm.vibenotes.core.kanban.CardRef
 import io.github.mappledm.vibenotes.core.kanban.KanbanBoard
 import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.kanban.KanbanLane
+import io.github.mappledm.vibenotes.core.notes.NoteMeta
 import io.github.mappledm.vibenotes.ui.components.DatePickerModal
 import io.github.mappledm.vibenotes.ui.components.Dates
 import io.github.mappledm.vibenotes.ui.components.OnResume
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.notes.TextInputDialog
+import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
 import java.time.LocalDate
 
+/**
+ * A board as vertical sections (one per column) instead of side-by-side columns:
+ * readable on a phone, one-handed, and horizontal swipes stay free for switching tabs.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BoardScreen(
     path: String,
     onOpenDrawer: () -> Unit,
     onOpenAsText: (String) -> Unit,
+    boards: List<NoteMeta> = emptyList(),
+    onSwitchBoard: ((String) -> Unit)? = null,
+    createIfMissing: Boolean = false,
 ) {
-    val vm: BoardViewModel = viewModel(key = "board:$path", factory = containerFactory { BoardViewModel(it, path) })
+    val vm: BoardViewModel = viewModel(key = "board:$path", factory = containerFactory { BoardViewModel(it, path, createIfMissing) })
     val board by vm.board.collectAsStateWithLifecycle()
     val error by vm.error.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var menu by remember { mutableStateOf(false) }
+    var boardMenu by remember { mutableStateOf(false) }
     var addingLane by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<CardRef?>(null) }
+    // Collapsed state per column title; "done" columns start collapsed.
+    val collapsed = remember { mutableStateMapOf<String, Boolean>() }
 
     OnResume { vm.load() }
     LaunchedEffect(error) {
@@ -103,13 +125,28 @@ fun BoardScreen(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(vm.title) },
+                title = {
+                    Box {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = if (onSwitchBoard != null && boards.size > 1) Modifier.clip(MaterialTheme.shapes.small).clickable { boardMenu = true } else Modifier,
+                        ) {
+                            Text(vm.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (onSwitchBoard != null && boards.size > 1) Icon(Icons.Filled.ArrowDropDown, "Другая доска")
+                        }
+                        DropdownMenu(expanded = boardMenu, onDismissRequest = { boardMenu = false }) {
+                            boards.forEach { meta ->
+                                DropdownMenuItem(text = { Text(meta.title) }, onClick = { boardMenu = false; onSwitchBoard?.invoke(meta.path) })
+                            }
+                        }
+                    }
+                },
                 navigationIcon = { IconButton(onClick = onOpenDrawer) { Icon(Icons.Filled.Menu, "Меню") } },
                 actions = {
-                    IconButton(onClick = { addingLane = true }) { Icon(Icons.Filled.Add, "Новая колонка") }
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Ещё") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Новая колонка") }, onClick = { menu = false; addingLane = true })
                             DropdownMenuItem(text = { Text("Открыть как Markdown") }, onClick = { menu = false; onOpenAsText(path) })
                         }
                     }
@@ -122,28 +159,54 @@ fun BoardScreen(
             Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             return@Scaffold
         }
-        val listState = rememberLazyListState()
-        val laneWidth = (LocalConfiguration.current.screenWidthDp * 0.86f).coerceAtMost(340f).dp
-        LazyRow(
-            state = listState,
-            flingBehavior = rememberSnapFlingBehavior(listState),
-            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding(),
+        val firstOpenLane = current.lanes.indexOfFirst { !it.isComplete }.takeIf { it >= 0 } ?: 0
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            itemsIndexed(current.lanes, key = { index, lane -> "$index:${lane.title}" }) { laneIndex, lane ->
-                LaneColumn(
-                    lane = lane,
-                    laneIndex = laneIndex,
-                    width = laneWidth,
-                    onAdd = { vm.addCard(laneIndex, it) },
-                    onOpenCard = { cardIndex, card -> editing = CardRef(laneIndex, cardIndex, card.text) },
-                    onCheck = { cardIndex, card, checked -> vm.setChecked(CardRef(laneIndex, cardIndex, card.text), checked) },
-                    onRename = { vm.renameLane(laneIndex, it) },
-                    onDelete = { vm.deleteLane(laneIndex) },
+            item(key = "quick-add") {
+                QuickAdd(
+                    placeholder = if (current.lanes.isEmpty()) "Сначала добавьте колонку" else "Новая задача в «${current.lanes.getOrNull(firstOpenLane)?.title.orEmpty()}»",
+                    enabled = current.lanes.isNotEmpty(),
+                    onAdd = { vm.addCard(firstOpenLane, it) },
                 )
+            }
+            current.lanes.forEachIndexed { laneIndex, lane ->
+                val isCollapsed = collapsed[lane.title] ?: lane.isComplete
+                item(key = "lane:$laneIndex:${lane.title}") {
+                    LaneHeader(
+                        lane = lane,
+                        laneIndex = laneIndex,
+                        collapsed = isCollapsed,
+                        onToggle = { collapsed[lane.title] = !isCollapsed },
+                        onRename = { vm.renameLane(laneIndex, it) },
+                        onDelete = { vm.deleteLane(laneIndex) },
+                    )
+                }
+                if (!isCollapsed) {
+                    itemsIndexed(lane.cards, key = { index, card -> "card:$laneIndex:$index:${card.text}" }) { index, card ->
+                        val next = (laneIndex + 1).takeIf { it < current.lanes.size }
+                        CardRow(
+                            card = card,
+                            inCompleteLane = lane.isComplete,
+                            nextLaneTitle = next?.let { current.lanes[it].title },
+                            onClick = { editing = CardRef(laneIndex, index, card.text) },
+                            onCheck = { vm.setChecked(CardRef(laneIndex, index, card.text), it) },
+                            onMoveNext = { next?.let { vm.move(CardRef(laneIndex, index, card.text), it) } },
+                        )
+                    }
+                    if (lane.cards.isEmpty()) {
+                        item(key = "empty:$laneIndex") {
+                            Text(
+                                "Пусто",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.outline,
+                                modifier = Modifier.padding(start = 12.dp, bottom = 4.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -168,104 +231,129 @@ fun BoardScreen(
 }
 
 @Composable
-private fun LaneColumn(
+private fun QuickAdd(placeholder: String, enabled: Boolean, onAdd: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    fun submit() {
+        if (text.isNotBlank()) {
+            onAdd(text)
+            text = ""
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 8.dp)) {
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier.weight(1f),
+        ) {
+            Box(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                if (text.isEmpty()) {
+                    Text(placeholder, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                BasicTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    enabled = enabled,
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        FilledIconButton(onClick = { submit() }, enabled = enabled && text.isNotBlank()) { Icon(Icons.Filled.Add, "Добавить задачу") }
+    }
+}
+
+@Composable
+private fun laneColor(lane: KanbanLane, index: Int): Color = when {
+    lane.isComplete -> LocalExtraColors.current.success
+    index == 0 -> MaterialTheme.colorScheme.primaryContainer
+    else -> MaterialTheme.colorScheme.primary
+}
+
+@Composable
+private fun LaneHeader(
     lane: KanbanLane,
     laneIndex: Int,
-    width: androidx.compose.ui.unit.Dp,
-    onAdd: (String) -> Unit,
-    onOpenCard: (Int, KanbanCard) -> Unit,
-    onCheck: (Int, KanbanCard, Boolean) -> Unit,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
-    var adding by remember { mutableStateOf(false) }
-    var draft by remember { mutableStateOf("") }
-
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shape = MaterialTheme.shapes.large,
-        modifier = Modifier
-            .width(width)
-            .fillMaxHeight(),
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onToggle)
+            .padding(start = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.padding(vertical = 8.dp)) {
-            Row(Modifier.padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(lane.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Text("${lane.cards.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Box {
-                    IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Действия с колонкой") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; renaming = true })
-                        DropdownMenuItem(
-                            text = { Text(if (lane.cards.isEmpty()) "Удалить колонку" else "Удалить (сначала уберите карточки)") },
-                            enabled = lane.cards.isEmpty(),
-                            onClick = { menu = false; onDelete() },
-                        )
-                    }
-                }
-            }
-            LazyColumn(
-                modifier = Modifier.weight(1f, fill = false),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                itemsIndexed(lane.cards, key = { index, card -> "$laneIndex:$index:${card.text}" }) { index, card ->
-                    CardItem(card, lane.isComplete, onClick = { onOpenCard(index, card) }, onCheck = { onCheck(index, card, it) })
-                }
-            }
-            if (adding) {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    placeholder = { Text("Новая карточка") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        if (draft.isBlank()) adding = false else {
-                            onAdd(draft)
-                            draft = ""
-                        }
-                    }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+        Box(
+            Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(laneColor(lane, laneIndex)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(lane.title, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.width(8.dp))
+        Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(8.dp)) {
+            Text(
+                "${lane.cards.size}",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        Icon(
+            if (collapsed) Icons.Filled.KeyboardArrowDown else Icons.Filled.KeyboardArrowUp,
+            if (collapsed) "Развернуть" else "Свернуть",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Действия с колонкой") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; renaming = true })
+                DropdownMenuItem(
+                    text = { Text(if (lane.cards.isEmpty()) "Удалить колонку" else "Удалить (сначала уберите карточки)") },
+                    enabled = lane.cards.isEmpty(),
+                    onClick = { menu = false; onDelete() },
                 )
-                Row(Modifier.padding(horizontal = 4.dp)) {
-                    TextButton(onClick = { adding = false; draft = "" }) { Text("Готово") }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { onAdd(draft); draft = "" }, enabled = draft.isNotBlank()) { Text("Добавить") }
-                }
-            } else {
-                TextButton(onClick = { adding = true }, modifier = Modifier.padding(horizontal = 4.dp)) {
-                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(6.dp))
-                    Text("Карточка")
-                }
             }
         }
     }
-
     if (renaming) {
         TextInputDialog("Название колонки", lane.title, "Сохранить", onDismiss = { renaming = false }, onConfirm = onRename)
     }
 }
 
 @Composable
-private fun CardItem(card: KanbanCard, inCompleteLane: Boolean, onClick: () -> Unit, onCheck: (Boolean) -> Unit) {
+private fun CardRow(
+    card: KanbanCard,
+    inCompleteLane: Boolean,
+    nextLaneTitle: String?,
+    onClick: () -> Unit,
+    onCheck: (Boolean) -> Unit,
+    onMoveNext: () -> Unit,
+) {
     val today = LocalDate.now()
+    val done = card.checked || inCompleteLane
     Surface(
         onClick = onClick,
-        color = MaterialTheme.colorScheme.surface,
-        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(Modifier.padding(end = 12.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = card.checked, onCheckedChange = onCheck)
-            Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-                val done = card.checked || inCompleteLane
+            Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 Text(
                     card.title,
                     style = MaterialTheme.typography.bodyLarge.copy(textDecoration = if (done) TextDecoration.LineThrough else null),
@@ -274,12 +362,12 @@ private fun CardItem(card: KanbanCard, inCompleteLane: Boolean, onClick: () -> U
                 card.dueDate?.let { due ->
                     val overdue = !done && due.isBefore(today)
                     val soon = !done && !overdue && !due.isAfter(today.plusDays(1))
+                    val color = when {
+                        overdue -> MaterialTheme.colorScheme.error
+                        soon -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                        val color = when {
-                            overdue -> MaterialTheme.colorScheme.error
-                            soon -> MaterialTheme.colorScheme.primary
-                            else -> MaterialTheme.colorScheme.onSurfaceVariant
-                        }
                         Icon(Icons.Outlined.Schedule, null, Modifier.size(14.dp), tint = color)
                         Spacer(Modifier.width(4.dp))
                         Text(
@@ -288,6 +376,11 @@ private fun CardItem(card: KanbanCard, inCompleteLane: Boolean, onClick: () -> U
                             color = color,
                         )
                     }
+                }
+            }
+            if (nextLaneTitle != null && !inCompleteLane) {
+                IconButton(onClick = onMoveNext) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowForward, "В «$nextLaneTitle»", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

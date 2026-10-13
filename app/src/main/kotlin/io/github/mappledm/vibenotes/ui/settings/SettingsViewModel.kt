@@ -17,6 +17,7 @@ import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.StorageLocation
+import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -92,6 +93,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setHistorySize(value: Int) = container.settings.setHistorySize(value)
     fun setTheme(mode: ThemeMode) = container.settings.setTheme(mode)
+    fun setPalette(palette: Palette) = container.settings.setPalette(palette)
     fun setDefaultCalendar(id: Long?) = container.settings.setDefaultCalendar(id)
     fun setEventMinutes(value: Int) = container.settings.setEventMinutes(value)
     fun setReminder(value: Int?) = container.settings.setReminderMinutes(value)

@@ -6,13 +6,20 @@ import io.github.mappledm.vibenotes.core.ai.LlmMessage
 import io.github.mappledm.vibenotes.core.ai.LlmRequest
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.ai.Role
+import io.github.mappledm.vibenotes.core.ai.ToolCallRequest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
-data class ConversationTurn(val role: Role, val text: String)
+/**
+ * An action proposed in an earlier turn, replayed to the model as a real tool call plus its
+ * outcome. Writing actions as plain text in history taught the model to "perform" them in text.
+ */
+data class PastAction(val toolName: String, val argumentsJson: String, val outcome: String)
+
+data class ConversationTurn(val role: Role, val text: String, val actions: List<PastAction> = emptyList())
 
 sealed interface AssistantEvent {
     data class TextDelta(val text: String) : AssistantEvent
@@ -39,8 +46,23 @@ class AssistantEngine(
         userText: String,
     ): Flow<AssistantEvent> = flow {
         val messages = mutableListOf(LlmMessage(Role.SYSTEM, SystemPrompt.build(context)))
-        history.filter { it.text.isNotBlank() && (it.role == Role.USER || it.role == Role.ASSISTANT) }
-            .forEach { messages += LlmMessage(it.role, it.text) }
+        history.forEachIndexed { turnIndex, turn ->
+            when (turn.role) {
+                Role.USER -> if (turn.text.isNotBlank()) messages += LlmMessage(Role.USER, turn.text)
+                Role.ASSISTANT -> {
+                    if (turn.actions.isNotEmpty()) {
+                        val calls = turn.actions.mapIndexed { i, action ->
+                            ToolCallRequest("history_${turnIndex}_$i", action.toolName, action.argumentsJson)
+                        }
+                        messages += LlmMessage(Role.ASSISTANT, "", toolCalls = calls)
+                        turn.actions.forEachIndexed { i, action -> messages += LlmMessage(Role.TOOL, action.outcome, toolCallId = calls[i].id) }
+                    }
+                    val text = turn.text.ifBlank { if (turn.actions.isNotEmpty()) "Показал карточку для подтверждения." else "" }
+                    if (text.isNotBlank()) messages += LlmMessage(Role.ASSISTANT, text)
+                }
+                else -> Unit
+            }
+        }
         messages += LlmMessage(Role.USER, userText)
 
         val specs = registry.tools.map { it.spec }

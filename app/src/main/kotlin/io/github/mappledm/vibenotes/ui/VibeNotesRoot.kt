@@ -69,20 +69,43 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.AlertDialog
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.ui.graphics.vector.ImageVector
 import kotlinx.serialization.Serializable
 
-@Serializable object InboxRoute
-@Serializable object WeekRoute
+const val TAB_INBOX = 0
+const val TAB_WEEK = 1
+const val TAB_TASKS = 2
+const val TAB_NOTES = 3
+
+private data class Tab(val label: String, val icon: ImageVector)
+
+private val Tabs = listOf(
+    Tab("Входящие", Icons.Outlined.Inbox),
+    Tab("Неделя", Icons.Outlined.CalendarMonth),
+    Tab("Задачи", Icons.Outlined.ViewColumn),
+    Tab("Заметки", Icons.Outlined.Folder),
+)
+
+@Serializable object HomeRoute
 @Serializable data class NotesRoute(val folder: String = "")
 @Serializable data class EditorRoute(val path: String? = null, val folder: String = "")
-@Serializable data class BoardRoute(val path: String)
 @Serializable object SettingsRoute
 
 @Composable
 fun VibeNotesRoot(container: AppContainer) {
     val settings by container.settings.state.collectAsStateWithLifecycle()
     val vault by container.vault.collectAsStateWithLifecycle()
-    VibeTheme(settings.theme) {
+    VibeTheme(settings.theme, settings.palette) {
         Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
             val current = vault
             if (current == null) {
@@ -102,106 +125,171 @@ private fun MainNavigation(container: AppContainer, vault: Vault) {
     val nav = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    val pager = rememberPagerState(initialPage = TAB_INBOX) { Tabs.size }
     val backStack by nav.currentBackStackEntryAsState()
-    val destination = backStack?.destination
     val pendingShare by container.pendingShare.collectAsStateWithLifecycle()
 
-    fun openTop(route: Any) {
+    /** Back to the swipeable tabs, on [tab]. */
+    fun goHome(tab: Int) {
         scope.launch { drawerState.close() }
-        nav.navigate(route) {
-            popUpTo<InboxRoute>()
-            launchSingleTop = true
-        }
+        if (backStack?.destination?.hasRoute<HomeRoute>() != true) nav.popBackStack<HomeRoute>(inclusive = false)
+        scope.launch { pager.animateScrollToPage(tab) }
+    }
+
+    fun openBoard(path: String) {
+        container.settings.setDefaultBoard(path)
+        goHome(TAB_TASKS)
     }
 
     val openDrawer: () -> Unit = { scope.launch { drawerState.open() } }
-
-    LaunchedEffect(pendingShare) {
-        if (pendingShare != null && destination?.hasRoute<InboxRoute>() != true) openTop(InboxRoute)
+    val openNote: (String) -> Unit = { path ->
+        scope.launch { drawerState.close() }
+        nav.navigate(EditorRoute(path))
     }
 
-    val isTopLevel = destination == null ||
-        destination.hasRoute<InboxRoute>() || destination.hasRoute<WeekRoute>() ||
-        (destination.hasRoute<NotesRoute>() && backStack?.toRoute<NotesRoute>()?.folder.isNullOrEmpty())
-    val currentBoard = if (destination?.hasRoute<BoardRoute>() == true) backStack?.toRoute<BoardRoute>()?.path else null
+    LaunchedEffect(pendingShare) {
+        if (pendingShare != null) goHome(TAB_INBOX)
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        // Boards scroll horizontally, so the drawer opens from the menu button there.
-        gesturesEnabled = drawerState.isOpen || isTopLevel,
+        // Horizontal swipes switch tabs; the drawer opens from the menu button.
+        gesturesEnabled = drawerState.isOpen,
         drawerContent = {
             AppDrawer(
                 container = container,
                 vault = vault,
-                isInbox = destination?.hasRoute<InboxRoute>() == true,
-                isWeek = destination?.hasRoute<WeekRoute>() == true,
-                isNotes = destination?.hasRoute<NotesRoute>() == true,
-                currentBoard = currentBoard,
-                onNavigate = ::openTop,
-                onOpenNote = { path ->
+                onOpenBoard = ::openBoard,
+                onOpenNote = openNote,
+                onOpenSettings = {
                     scope.launch { drawerState.close() }
-                    nav.navigate(EditorRoute(path))
+                    nav.navigate(SettingsRoute) { launchSingleTop = true }
                 },
             )
         },
     ) {
-        NavGraph(nav, openDrawer)
+        NavHost(
+            navController = nav,
+            startDestination = HomeRoute,
+            enterTransition = { fadeIn(tween(160)) },
+            exitTransition = { fadeOut(tween(120)) },
+            popEnterTransition = { fadeIn(tween(160)) },
+            popExitTransition = { fadeOut(tween(120)) },
+        ) {
+            composable<HomeRoute> {
+                HomeTabs(
+                    container = container,
+                    vault = vault,
+                    pager = pager,
+                    openDrawer = openDrawer,
+                    openNote = openNote,
+                    openBoard = ::openBoard,
+                    openFolder = { nav.navigate(NotesRoute(it)) },
+                    newNote = { folder -> nav.navigate(EditorRoute(null, folder)) },
+                    openSettings = { nav.navigate(SettingsRoute) },
+                )
+            }
+            composable<NotesRoute> { entry ->
+                val route = entry.toRoute<NotesRoute>()
+                NotesScreen(
+                    folder = route.folder,
+                    onOpenDrawer = openDrawer,
+                    onBack = { nav.popBackStack() },
+                    onOpenFolder = { nav.navigate(NotesRoute(it)) },
+                    onOpenNote = openNote,
+                    onOpenBoard = ::openBoard,
+                    onNewNote = { folder -> nav.navigate(EditorRoute(null, folder)) },
+                )
+            }
+            composable<EditorRoute> { entry ->
+                val route = entry.toRoute<EditorRoute>()
+                EditorScreen(
+                    path = route.path,
+                    folder = route.folder,
+                    onBack = { nav.popBackStack() },
+                    onOpenNote = openNote,
+                )
+            }
+            composable<SettingsRoute> {
+                SettingsScreen(onBack = { nav.popBackStack() }, onOpenNote = openNote)
+            }
+        }
     }
 }
 
+/** Inbox · Week · Tasks · Notes: swipe left/right or tap the bottom bar. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun NavGraph(nav: NavHostController, openDrawer: () -> Unit) {
-    val openNote: (String) -> Unit = { nav.navigate(EditorRoute(it)) }
-    val openBoard: (String) -> Unit = { nav.navigate(BoardRoute(it)) }
-    NavHost(
-        navController = nav,
-        startDestination = InboxRoute,
-        enterTransition = { fadeIn(tween(160)) },
-        exitTransition = { fadeOut(tween(120)) },
-        popEnterTransition = { fadeIn(tween(160)) },
-        popExitTransition = { fadeOut(tween(120)) },
-    ) {
-        composable<InboxRoute> {
-            InboxScreen(
-                onOpenDrawer = openDrawer,
-                onOpenNote = openNote,
-                onOpenBoard = openBoard,
-                onOpenSettings = { nav.navigate(SettingsRoute) },
-            )
-        }
-        composable<WeekRoute> {
-            WeekScreen(onOpenDrawer = openDrawer, onOpenBoard = openBoard)
-        }
-        composable<NotesRoute> { entry ->
-            val route = entry.toRoute<NotesRoute>()
-            NotesScreen(
-                folder = route.folder,
-                onOpenDrawer = openDrawer,
-                onBack = { nav.popBackStack() },
-                onOpenFolder = { nav.navigate(NotesRoute(it)) },
-                onOpenNote = openNote,
-                onOpenBoard = openBoard,
-                onNewNote = { folder -> nav.navigate(EditorRoute(null, folder)) },
-            )
-        }
-        composable<EditorRoute> { entry ->
-            val route = entry.toRoute<EditorRoute>()
-            EditorScreen(
-                path = route.path,
-                folder = route.folder,
-                onBack = { nav.popBackStack() },
-                onOpenNote = openNote,
-            )
-        }
-        composable<BoardRoute> { entry ->
-            BoardScreen(
-                path = entry.toRoute<BoardRoute>().path,
-                onOpenDrawer = openDrawer,
-                onOpenAsText = openNote,
-            )
-        }
-        composable<SettingsRoute> {
-            SettingsScreen(onBack = { nav.popBackStack() }, onOpenNote = openNote)
+private fun HomeTabs(
+    container: AppContainer,
+    vault: Vault,
+    pager: PagerState,
+    openDrawer: () -> Unit,
+    openNote: (String) -> Unit,
+    openBoard: (String) -> Unit,
+    openFolder: (String) -> Unit,
+    newNote: (String) -> Unit,
+    openSettings: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val settings by container.settings.state.collectAsStateWithLifecycle()
+    val index by vault.notes.index.collectAsStateWithLifecycle()
+
+    BackHandler(enabled = pager.currentPage != TAB_INBOX) {
+        scope.launch { pager.animateScrollToPage(TAB_INBOX) }
+    }
+
+    Scaffold(
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
+        bottomBar = {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                Tabs.forEachIndexed { i, tab ->
+                    NavigationBarItem(
+                        selected = pager.currentPage == i,
+                        onClick = { scope.launch { pager.animateScrollToPage(i) } },
+                        icon = { Icon(tab.icon, contentDescription = null) },
+                        label = { Text(tab.label) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
+        HorizontalPager(
+            state = pager,
+            key = { it },
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding),
+        ) { page ->
+            when (page) {
+                TAB_INBOX -> InboxScreen(
+                    onOpenDrawer = openDrawer,
+                    onOpenNote = openNote,
+                    onOpenBoard = openBoard,
+                    onOpenSettings = openSettings,
+                )
+                TAB_WEEK -> WeekScreen(onOpenDrawer = openDrawer, onOpenBoard = openBoard)
+                TAB_TASKS -> key(settings.defaultBoard) {
+                    BoardScreen(
+                        path = settings.defaultBoard,
+                        onOpenDrawer = openDrawer,
+                        onOpenAsText = openNote,
+                        boards = index.boards.sortedBy { it.title.lowercase() },
+                        onSwitchBoard = { container.settings.setDefaultBoard(it) },
+                        createIfMissing = true,
+                    )
+                }
+                else -> NotesScreen(
+                    folder = "",
+                    onOpenDrawer = openDrawer,
+                    onBack = {},
+                    onOpenFolder = openFolder,
+                    onOpenNote = openNote,
+                    onOpenBoard = openBoard,
+                    onNewNote = newNote,
+                )
+            }
         }
     }
 }
@@ -210,12 +298,9 @@ private fun NavGraph(nav: NavHostController, openDrawer: () -> Unit) {
 private fun AppDrawer(
     container: AppContainer,
     vault: Vault,
-    isInbox: Boolean,
-    isWeek: Boolean,
-    isNotes: Boolean,
-    currentBoard: String?,
-    onNavigate: (Any) -> Unit,
+    onOpenBoard: (String) -> Unit,
     onOpenNote: (String) -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val index by vault.notes.index.collectAsStateWithLifecycle()
     val settings by container.settings.state.collectAsStateWithLifecycle()
@@ -240,25 +325,6 @@ private fun AppDrawer(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             )
-            Spacer(Modifier.height(12.dp))
-            NavigationDrawerItem(
-                label = { Text("Входящие") },
-                icon = { Icon(Icons.Outlined.Inbox, null) },
-                selected = isInbox,
-                onClick = { onNavigate(InboxRoute) },
-            )
-            NavigationDrawerItem(
-                label = { Text("Неделя") },
-                icon = { Icon(Icons.Outlined.CalendarMonth, null) },
-                selected = isWeek,
-                onClick = { onNavigate(WeekRoute) },
-            )
-            NavigationDrawerItem(
-                label = { Text("Заметки") },
-                icon = { Icon(Icons.Outlined.Folder, null) },
-                selected = isNotes,
-                onClick = { onNavigate(NotesRoute()) },
-            )
 
             DrawerSection("Доски")
             val boards = index.boards.sortedBy { it.title.lowercase() }
@@ -267,21 +333,15 @@ private fun AppDrawer(
                     label = { Text(VaultPaths.baseName(settings.defaultBoard)) },
                     icon = { Icon(Icons.Outlined.ViewColumn, null) },
                     selected = false,
-                    onClick = {
-                        scope.launch {
-                            runCatching { vault.kanban.ensureBoard(settings.defaultBoard) }
-                                .onSuccess { onNavigate(BoardRoute(it)) }
-                                .onFailure { error = it.message }
-                        }
-                    },
+                    onClick = { onOpenBoard(settings.defaultBoard) },
                 )
             }
             boards.forEach { board ->
                 NavigationDrawerItem(
                     label = { Text(board.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     icon = { Icon(Icons.Outlined.ViewColumn, null) },
-                    selected = board.path == currentBoard,
-                    onClick = { onNavigate(BoardRoute(board.path)) },
+                    selected = board.path == settings.defaultBoard,
+                    onClick = { onOpenBoard(board.path) },
                 )
             }
             NavigationDrawerItem(
@@ -311,7 +371,7 @@ private fun AppDrawer(
                 label = { Text("Настройки") },
                 icon = { Icon(Icons.Outlined.Settings, null) },
                 selected = false,
-                onClick = { onNavigate(SettingsRoute) },
+                onClick = onOpenSettings,
                 modifier = Modifier.padding(vertical = 8.dp),
             )
         }
@@ -321,7 +381,7 @@ private fun AppDrawer(
         TextInputDialog("Новая доска", "", "Создать", onDismiss = { newBoard = false }) { title ->
             scope.launch {
                 runCatching { vault.kanban.createBoard("", title) }
-                    .onSuccess { onNavigate(BoardRoute(it.path)) }
+                    .onSuccess { onOpenBoard(it.path) }
                     .onFailure { error = it.message }
             }
         }

@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
+enum class Palette { LEMON_COFFEE, GRAPHITE }
+
 /** Where the user's Markdown files live. */
 sealed interface StorageLocation {
     /** A folder chosen through the Storage Access Framework (can be synced to a PC). */
@@ -44,6 +46,7 @@ data class AppSettings(
     val defaultBoard: String,
     val inboxNote: String,
     val theme: ThemeMode,
+    val palette: Palette,
     val pinned: Set<String>,
 )
 
@@ -65,6 +68,7 @@ class SettingsRepository(context: Context) {
         defaultBoard = prefs.getString(KEY_BOARD, null) ?: DEFAULT_BOARD,
         inboxNote = prefs.getString(KEY_INBOX, null) ?: DEFAULT_INBOX,
         theme = runCatching { ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "SYSTEM") }.getOrDefault(ThemeMode.SYSTEM),
+        palette = runCatching { Palette.valueOf(prefs.getString(KEY_PALETTE, null) ?: "LEMON_COFFEE") }.getOrDefault(Palette.LEMON_COFFEE),
         pinned = prefs.getStringSet(KEY_PINNED, emptySet())?.toSet() ?: emptySet(),
     )
 
@@ -89,6 +93,7 @@ class SettingsRepository(context: Context) {
     fun setDefaultBoard(path: String) = edit { putString(KEY_BOARD, path) }
     fun setInboxNote(path: String) = edit { putString(KEY_INBOX, path) }
     fun setTheme(mode: ThemeMode) = edit { putString(KEY_THEME, mode.name) }
+    fun setPalette(palette: Palette) = edit { putString(KEY_PALETTE, palette.name) }
 
     fun setPinned(path: String, pinned: Boolean) = edit {
         val updated = current.pinned.toMutableSet().apply { if (pinned) add(path) else remove(path) }
@@ -113,6 +118,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_BOARD = "board_default"
         private const val KEY_INBOX = "inbox_note"
         private const val KEY_THEME = "theme"
+        private const val KEY_PALETTE = "palette"
         private const val KEY_PINNED = "pinned"
     }
 }

@@ -51,6 +51,9 @@ The user types quick messages (often in Russian). Your job is to turn them into 
 - Changes (calendar events, notes, tasks) are ONLY made through the propose tools: create_calendar_event, add_task, create_note, append_to_note.
   These do not execute anything: the app shows the user a preview card with a confirm button.
 - Never claim that something was created, saved or scheduled. Say what you propose ("Предлагаю добавить…"), the card does the rest.
+- Text never performs anything. Every new request to add something needs a tool call IN THIS TURN, even if a similar
+  request appeared earlier: earlier cards may have been dismissed or never confirmed (see their tool results).
+  Only skip it if a tool result in history says the same item was already confirmed and completed — then say so and offer to add another.
 - Choose the action:
   * something at a specific day/time (meeting, doctor, call, trip, birthday) -> create_calendar_event
   * a to-do without a fixed appointment time (buy, do, send, fix) -> add_task (with due_date if a day is mentioned)

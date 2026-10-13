@@ -80,15 +80,22 @@ class AssistantEngineTest {
     }
 
     @Test
-    fun historyIsIncludedBeforeUserMessage() = runTest {
+    fun pastActionsAreReplayedAsToolCalls() = runTest {
         val llm = ScriptedLlm(ScriptedLlm.text("ok"))
         val history = listOf(
             ConversationTurn(Role.USER, "в четверг к врачу"),
-            ConversationTurn(Role.ASSISTANT, "[событие «Врач» — выполнено]"),
+            ConversationTurn(
+                Role.ASSISTANT, "",
+                listOf(PastAction("create_calendar_event", """{"title":"Врач"}""", "The user confirmed and the app completed it.")),
+            ),
         )
         AssistantEngine(llm, registry).run(config, testContext(), history, "перенеси на 10").toList()
-        val roles = llm.requests.single().messages.map { it.role }
-        assertEquals(listOf(Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.USER), roles)
+        val messages = llm.requests.single().messages
+        assertEquals(listOf(Role.SYSTEM, Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.USER), messages.map { it.role })
+        val call = messages[2].toolCalls.single()
+        assertEquals("create_calendar_event", call.name)
+        assertEquals(call.id, messages[3].toolCallId)
+        assertTrue(messages[3].content.contains("confirmed"))
     }
 
     @Test

@@ -17,9 +17,75 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
 
-// Calm, paper-like neutrals with a single indigo accent. No gradients, no glass.
+// "Лимон и кофе": cream paper, coffee ink, lemon highlights. The default palette.
+private val LemonCoffeeLight = lightColorScheme(
+    primary = Color(0xFF6B4A2F),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFFBE38E),
+    onPrimaryContainer = Color(0xFF3B2A12),
+    secondary = Color(0xFF7A6448),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFF7E07A),
+    onSecondaryContainer = Color(0xFF3B2A12),
+    tertiary = Color(0xFF8C6D00),
+    onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFFF1B0),
+    onTertiaryContainer = Color(0xFF2E2400),
+    background = Color(0xFFFBF6EC),
+    onBackground = Color(0xFF2A211A),
+    surface = Color(0xFFFBF6EC),
+    onSurface = Color(0xFF2A211A),
+    surfaceVariant = Color(0xFFF0E7D6),
+    onSurfaceVariant = Color(0xFF6E6152),
+    surfaceContainerLowest = Color(0xFFFFFDF7),
+    surfaceContainerLow = Color(0xFFF6EEDF),
+    surfaceContainer = Color(0xFFF1E8D6),
+    surfaceContainerHigh = Color(0xFFEBE0CB),
+    surfaceContainerHighest = Color(0xFFE4D8C0),
+    outline = Color(0xFFCBBBA3),
+    outlineVariant = Color(0xFFE5D9C5),
+    error = Color(0xFFB3261E),
+    onError = Color.White,
+    errorContainer = Color(0xFFF9DEDC),
+    onErrorContainer = Color(0xFF410E0B),
+)
+
+private val LemonCoffeeDark = darkColorScheme(
+    primary = Color(0xFFF5D96B),
+    onPrimary = Color(0xFF3A2C00),
+    primaryContainer = Color(0xFF5A4422),
+    onPrimaryContainer = Color(0xFFFCE9B5),
+    secondary = Color(0xFFD9C3A3),
+    onSecondary = Color(0xFF3B2C1A),
+    secondaryContainer = Color(0xFF4D3B20),
+    onSecondaryContainer = Color(0xFFF7E3A6),
+    tertiary = Color(0xFFE8C66A),
+    onTertiary = Color(0xFF3B2F00),
+    tertiaryContainer = Color(0xFF4F4100),
+    onTertiaryContainer = Color(0xFFFFEFB0),
+    background = Color(0xFF1C1612),
+    onBackground = Color(0xFFEFE5D6),
+    surface = Color(0xFF1C1612),
+    onSurface = Color(0xFFEFE5D6),
+    surfaceVariant = Color(0xFF332A22),
+    onSurfaceVariant = Color(0xFFBBAE9C),
+    surfaceContainerLowest = Color(0xFF15100D),
+    surfaceContainerLow = Color(0xFF231C17),
+    surfaceContainer = Color(0xFF29211B),
+    surfaceContainerHigh = Color(0xFF312821),
+    surfaceContainerHighest = Color(0xFF3A3027),
+    outline = Color(0xFF5E5043),
+    outlineVariant = Color(0xFF3B3128),
+    error = Color(0xFFF2B8B5),
+    onError = Color(0xFF601410),
+    errorContainer = Color(0xFF5C1D19),
+    onErrorContainer = Color(0xFFF9DEDC),
+)
+
+// "Графит": calm neutrals with a single indigo accent.
 private val LightColors = lightColorScheme(
     primary = Color(0xFF3F55C9),
     onPrimary = Color.White,
@@ -118,17 +184,25 @@ val LocalExtraColors = staticCompositionLocalOf {
 val MonoStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 14.sp, lineHeight = 20.sp)
 
 @Composable
-fun VibeTheme(mode: ThemeMode, content: @Composable () -> Unit) {
+fun VibeTheme(mode: ThemeMode, palette: Palette = Palette.LEMON_COFFEE, content: @Composable () -> Unit) {
     val dark = when (mode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    val colors: ColorScheme = if (dark) DarkColors else LightColors
-    val extra = if (dark) {
-        ExtraColors(syntax = Color(0xFF6E717B), codeBackground = Color(0xFF1E2024), success = Color(0xFF7FD3A8), warning = Color(0xFFE8C26A))
-    } else {
-        ExtraColors(syntax = Color(0xFFA3A5AD), codeBackground = Color(0xFFF0F0EC), success = Color(0xFF2E7D5B), warning = Color(0xFF9A6B00))
+    val colors: ColorScheme = when (palette) {
+        Palette.LEMON_COFFEE -> if (dark) LemonCoffeeDark else LemonCoffeeLight
+        Palette.GRAPHITE -> if (dark) DarkColors else LightColors
+    }
+    val extra = when {
+        palette == Palette.LEMON_COFFEE && dark ->
+            ExtraColors(syntax = Color(0xFF7D6F60), codeBackground = Color(0xFF2A221C), success = Color(0xFFB5D27A), warning = Color(0xFFF5D96B))
+        palette == Palette.LEMON_COFFEE ->
+            ExtraColors(syntax = Color(0xFFB2A38C), codeBackground = Color(0xFFF1E8D6), success = Color(0xFF5E7F2E), warning = Color(0xFF8C6D00))
+        dark ->
+            ExtraColors(syntax = Color(0xFF6E717B), codeBackground = Color(0xFF1E2024), success = Color(0xFF7FD3A8), warning = Color(0xFFE8C26A))
+        else ->
+            ExtraColors(syntax = Color(0xFFA3A5AD), codeBackground = Color(0xFFF0F0EC), success = Color(0xFF2E7D5B), warning = Color(0xFF9A6B00))
     }
     androidx.compose.runtime.CompositionLocalProvider(LocalExtraColors provides extra) {
         MaterialTheme(colorScheme = colors, shapes = AppShapes, typography = AppTypography, content = content)

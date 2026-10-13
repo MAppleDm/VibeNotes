@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.time.LocalDate
 
-class BoardViewModel(container: AppContainer, val path: String) : ViewModel() {
+class BoardViewModel(container: AppContainer, val path: String, private val createIfMissing: Boolean = false) : ViewModel() {
     private val kanban = container.requireVault().kanban
     val title: String = VaultPaths.baseName(path)
 
@@ -29,7 +29,10 @@ class BoardViewModel(container: AppContainer, val path: String) : ViewModel() {
 
     fun load() {
         viewModelScope.launch {
-            runCatching { kanban.load(path) }
+            runCatching {
+                if (createIfMissing) kanban.ensureBoard(path)
+                kanban.load(path)
+            }
                 .onSuccess { _board.value = it }
                 .onFailure { _error.value = it.message ?: "Не удалось открыть доску" }
         }
