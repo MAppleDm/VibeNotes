@@ -68,7 +68,16 @@ class ChatStore(
             else runCatching { json.decodeFromString(serializer, file.readText()) }.getOrElse { emptyList() }
         }
         // An entry that was streaming when the app died is complete as far as it got.
-        _entries.value = list
+        // An action that was running is unknown: show it as interrupted so it can be retried.
+        _entries.value = list.map { entry ->
+            if (entry.proposals.none { it.status == ProposalStatus.APPLYING }) entry
+            else entry.copy(
+                proposals = entry.proposals.map {
+                    if (it.status != ProposalStatus.APPLYING) it
+                    else it.copy(status = ProposalStatus.FAILED, resultMessage = "Выполнение прервано. Проверьте результат и повторите")
+                },
+            )
+        }
         loaded = true
     }
 

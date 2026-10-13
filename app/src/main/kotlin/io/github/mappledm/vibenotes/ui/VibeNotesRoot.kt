@@ -61,6 +61,14 @@ import io.github.mappledm.vibenotes.ui.settings.SettingsScreen
 import io.github.mappledm.vibenotes.ui.theme.VibeTheme
 import io.github.mappledm.vibenotes.ui.week.WeekScreen
 import kotlinx.coroutines.launch
+import io.github.mappledm.vibenotes.ui.theme.MonoStyle
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import kotlinx.serialization.Serializable
 
 @Serializable object InboxRoute
@@ -83,6 +91,8 @@ fun VibeNotesRoot(container: AppContainer) {
                 // A new folder means new repositories: start a fresh navigation graph.
                 key(current.id) { MainNavigation(container, current) }
             }
+            val crash by container.lastCrash.collectAsStateWithLifecycle()
+            crash?.let { report -> CrashDialog(report, onClose = container::dismissCrash) }
         }
     }
 }
@@ -325,5 +335,39 @@ private fun DrawerSection(title: String) {
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 6.dp),
+    )
+}
+
+@Composable
+private fun CrashDialog(report: String, onClose: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("Приложение закрылось с ошибкой") },
+        text = {
+            Column {
+                Text(
+                    "Отчёт хранится только на телефоне. Скопируйте его и пришлите разработчику — это поможет исправить ошибку.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                SelectionContainer {
+                    Text(
+                        report.take(6000),
+                        style = MonoStyle.copy(fontSize = 11.sp, lineHeight = 14.sp),
+                        modifier = Modifier
+                            .heightIn(max = 320.dp)
+                            .verticalScroll(rememberScrollState()),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                clipboard.setText(AnnotatedString(report))
+                onClose()
+            }) { Text("Скопировать") }
+        },
+        dismissButton = { TextButton(onClick = onClose) { Text("Закрыть") } },
     )
 }

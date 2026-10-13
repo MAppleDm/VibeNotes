@@ -145,6 +145,22 @@ class InboxServiceTest {
     }
 
     @Test
+    fun actionInterruptedByACrashCanBeRetried() = runTest {
+        val file = File(tmp.root, "crash.json")
+        val store = ChatStore(file)
+        store.load()
+        store.add(
+            ChatEntry(
+                "a", ChatRole.ASSISTANT, "", 1,
+                proposals = listOf(ProposalItem("p", ActionProposal.AddTask("Задачи.md", "Сделать", "Письмо"), ProposalStatus.APPLYING)),
+            ),
+        )
+        val reloaded = ChatStore(file)
+        reloaded.load()
+        assertEquals(ProposalStatus.FAILED, reloaded.entries.value.single().proposals.single().status)
+    }
+
+    @Test
     fun chatPersistsAcrossRestarts() = runTest {
         val file = File(tmp.root, "persist.json")
         val store = ChatStore(file)

@@ -25,6 +25,9 @@ jobs:
       - name: Core unit tests (storage, Kanban, Markdown, AI client, tools)
         run: ./gradlew :core:test --stacktrace
 
+      - name: Regex patterns compile on Android's ICU engine
+        run: python3 tools/check_icu_regex.py core/src/main app/src/main
+
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 

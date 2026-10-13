@@ -81,7 +81,8 @@ class DefaultActionExecutor(
             ActionResult.Failure(e.message ?: "Ошибка доски")
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
+            // Last line of defence: an unexpected error must show up on the card, not close the app.
             ActionResult.Failure("Не удалось выполнить: ${e.message ?: e.javaClass.simpleName}")
         }
     }

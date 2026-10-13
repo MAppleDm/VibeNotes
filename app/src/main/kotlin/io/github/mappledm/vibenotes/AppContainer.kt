@@ -62,6 +62,16 @@ class AppContainer(private val app: Application) {
     private val _vault = MutableStateFlow<Vault?>(null)
     val vault: StateFlow<Vault?> = _vault.asStateFlow()
 
+    /** Stack trace of the previous crash, shown once so it can be copied into a bug report. */
+    val lastCrash = MutableStateFlow(
+        runCatching { File(app.filesDir, VibeNotesApp.CRASH_FILE).takeIf { it.exists() }?.readText() }.getOrNull(),
+    )
+
+    fun dismissCrash() {
+        runCatching { File(app.filesDir, VibeNotesApp.CRASH_FILE).delete() }
+        lastCrash.value = null
+    }
+
     /** Set when a previously chosen folder is no longer accessible. */
     val storageProblem = MutableStateFlow<String?>(null)
 

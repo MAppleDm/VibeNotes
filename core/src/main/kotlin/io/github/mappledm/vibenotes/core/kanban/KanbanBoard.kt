@@ -37,8 +37,9 @@ data class KanbanCard(
 
     companion object {
         // Obsidian Kanban plugin default triggers: @{date} and @@{time}.
-        private val dateTokenRegex = Regex("""(?<!@)@\{([^}]+)}""")
-        private val timeTokenRegex = Regex("""@@\{([^}]+)}""")
+        // Braces are escaped everywhere: Android's ICU regex engine rejects a bare "}".
+        private val dateTokenRegex = Regex("""(?<!@)@\{([^\}]+)\}""")
+        private val timeTokenRegex = Regex("""@@\{([^\}]+)\}""")
 
         fun create(title: String, due: LocalDate? = null, time: LocalTime? = null): KanbanCard =
             KanbanCard(title.replace('\n', ' ').trim()).withDue(due, time)
