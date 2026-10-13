@@ -30,7 +30,11 @@
 ./gradlew :app:assembleDebug  # APK: app/build/outputs/apk/debug/
 ```
 
-GitHub Actions собирает debug-APK на каждый push. Его можно скачать во вкладке **Actions** → последний запуск → артефакт `vibenotes-debug-apk`. Debug-сборки подписаны общим ключом из репозитория, поэтому новые версии ставятся поверх старых.
+GitHub Actions собирает debug-APK на каждый push и выкладывает его в релиз «Последняя сборка». Скачать на телефон можно по прямой ссылке:
+
+**https://github.com/MAppleDm/VibeNotes/releases/download/latest-build/VibeNotes.apk**
+
+Debug-сборки подписаны общим ключом из репозитория, поэтому новые версии ставятся поверх старых.
 
 ## Структура
 

@@ -2,6 +2,7 @@ name: Android CI
 
 on:
   push:
+    branches: ["**"]
   pull_request:
   workflow_dispatch:
 
@@ -9,6 +10,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -25,11 +28,36 @@ jobs:
       - name: Build debug APK
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Upload APK
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk VibeNotes.apk
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: vibenotes-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          path: VibeNotes.apk
+
+      # A fixed "latest-build" release gives a stable link that opens in a phone browser:
+      # https://github.com/<owner>/<repo>/releases/download/latest-build/VibeNotes.apk
+      - name: Move latest-build tag
+        if: github.event_name != 'pull_request'
+        run: |
+          git tag -f latest-build
+          git push -f origin latest-build
+
+      - name: Publish latest build
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Последняя сборка
+          body: |
+            Debug-сборка с коммита ${{ github.sha }} (ветка ${{ github.ref_name }}).
+            Скачать на телефон: VibeNotes.apk ниже. Ставится поверх предыдущей версии.
+          prerelease: false
+          make_latest: true
+          files: VibeNotes.apk
+          overwrite_files: true
 
       - name: Upload test reports
         if: failure()
