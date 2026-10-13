@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon version of ic_launcher_foreground: Android tints it, so only the shape matters. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.36"
+        android:scaleY="0.36"
+        android:translateX="18"
+        android:translateY="18">
+        <path
+            android:pathData="M52,46h96a8,8 0 0 1 8,8v66l-36,36H52a8,8 0 0 1 -8,-8V54a8,8 0 0 1 8,-8zM156,120h-28a8,8 0 0 0 -8,8v28"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineJoin="round"
+            android:strokeWidth="8" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M68.5,72h51a4.5,4.5 0 0 1 0,9h-51a4.5,4.5 0 0 1 0,-9zM68.5,96h33a4.5,4.5 0 0 1 0,9h-33a4.5,4.5 0 0 1 0,-9z" />
+        <path
+            android:pathData="M64,128l12,12l24,-26"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round"
+            android:strokeWidth="10" />
+    </group>
+</vector>
