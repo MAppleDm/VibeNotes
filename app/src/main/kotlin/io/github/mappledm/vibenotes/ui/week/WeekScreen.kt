@@ -111,7 +111,7 @@ fun WeekScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit) {
                 }
                 if (day.events.isEmpty() && day.tasks.isEmpty()) {
                     item(key = "empty:${day.date}") {
-                        Text("—", color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
+                        Text("—", color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, bottom = 4.dp))
                     }
                 }
                 items(day.events, key = { "event:${day.date}:${it.eventId}:${it.start}" }) { event ->

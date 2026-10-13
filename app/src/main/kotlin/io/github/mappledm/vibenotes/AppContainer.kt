@@ -21,6 +21,7 @@ import io.github.mappledm.vibenotes.core.storage.FileStore
 import io.github.mappledm.vibenotes.core.storage.LocalFileStore
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
 import io.github.mappledm.vibenotes.data.AppUpdater
+import io.github.mappledm.vibenotes.data.CustomFontStore
 import io.github.mappledm.vibenotes.data.SafFileStore
 import io.github.mappledm.vibenotes.data.SecretStore
 import io.github.mappledm.vibenotes.data.SettingsRepository
@@ -55,6 +56,7 @@ class AppContainer(val app: Application) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsRepository(app)
     val secrets = SecretStore(app)
+    val fonts = CustomFontStore(app)
     val calendar = AndroidCalendarGateway(app)
     val llm = OpenAiCompatibleClient()
     val updater = AppUpdater(app, settings, appScope)

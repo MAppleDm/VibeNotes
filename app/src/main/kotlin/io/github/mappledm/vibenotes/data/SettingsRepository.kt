@@ -11,6 +11,9 @@ enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 enum class Palette { LEMON_COFFEE, GRAPHITE }
 
+/** The interface font. CUSTOM is a .ttf/.otf the user imported (see CustomFontStore). */
+enum class AppFont { GOLOS, SYSTEM, CUSTOM }
+
 /** Where the user's Markdown files live. */
 sealed interface StorageLocation {
     /** A folder chosen through the Storage Access Framework (can be synced to a PC). */
@@ -47,6 +50,11 @@ data class AppSettings(
     val inboxNote: String,
     val theme: ThemeMode,
     val palette: Palette,
+    val font: AppFont,
+    /** Name of the imported font file, null if none was imported. */
+    val customFontName: String?,
+    /** Changes on every import, so the UI reloads a replaced font file. */
+    val customFontVersion: Long,
     val pinned: Set<String>,
     // --- how the assistant behaves ---
     val disabledTools: Set<String>,
@@ -80,6 +88,9 @@ class SettingsRepository(context: Context) {
         inboxNote = prefs.getString(KEY_INBOX, null) ?: DEFAULT_INBOX,
         theme = runCatching { ThemeMode.valueOf(prefs.getString(KEY_THEME, null) ?: "SYSTEM") }.getOrDefault(ThemeMode.SYSTEM),
         palette = runCatching { Palette.valueOf(prefs.getString(KEY_PALETTE, null) ?: "LEMON_COFFEE") }.getOrDefault(Palette.LEMON_COFFEE),
+        font = runCatching { AppFont.valueOf(prefs.getString(KEY_FONT, null) ?: "GOLOS") }.getOrDefault(AppFont.GOLOS),
+        customFontName = prefs.getString(KEY_CUSTOM_FONT_NAME, null),
+        customFontVersion = prefs.getLong(KEY_CUSTOM_FONT_VERSION, 0L),
         pinned = prefs.getStringSet(KEY_PINNED, emptySet())?.toSet() ?: emptySet(),
         disabledTools = prefs.getStringSet(KEY_DISABLED_TOOLS, emptySet())?.toSet() ?: emptySet(),
         autoApply = prefs.getStringSet(KEY_AUTO_APPLY, emptySet())?.toSet() ?: emptySet(),
@@ -112,6 +123,19 @@ class SettingsRepository(context: Context) {
     fun setInboxNote(path: String) = edit { putString(KEY_INBOX, path) }
     fun setTheme(mode: ThemeMode) = edit { putString(KEY_THEME, mode.name) }
     fun setPalette(palette: Palette) = edit { putString(KEY_PALETTE, palette.name) }
+    fun setFont(font: AppFont) = edit { putString(KEY_FONT, font.name) }
+
+    fun setCustomFont(name: String) = edit {
+        putString(KEY_CUSTOM_FONT_NAME, name)
+        putLong(KEY_CUSTOM_FONT_VERSION, System.currentTimeMillis())
+        putString(KEY_FONT, AppFont.CUSTOM.name)
+    }
+
+    fun clearCustomFont() = edit {
+        remove(KEY_CUSTOM_FONT_NAME)
+        putLong(KEY_CUSTOM_FONT_VERSION, System.currentTimeMillis())
+        if (current.font == AppFont.CUSTOM) putString(KEY_FONT, AppFont.GOLOS.name)
+    }
 
     fun setToolsEnabled(names: Set<String>, enabled: Boolean) = edit {
         putStringSet(KEY_DISABLED_TOOLS, if (enabled) current.disabledTools - names else current.disabledTools + names)
@@ -156,6 +180,9 @@ class SettingsRepository(context: Context) {
         private const val KEY_INBOX = "inbox_note"
         private const val KEY_THEME = "theme"
         private const val KEY_PALETTE = "palette"
+        private const val KEY_FONT = "font"
+        private const val KEY_CUSTOM_FONT_NAME = "font_custom_name"
+        private const val KEY_CUSTOM_FONT_VERSION = "font_custom_version"
         private const val KEY_PINNED = "pinned"
     }
 }

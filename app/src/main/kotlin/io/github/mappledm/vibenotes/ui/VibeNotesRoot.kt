@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -61,6 +62,7 @@ import io.github.mappledm.vibenotes.ui.onboarding.OnboardingScreen
 import io.github.mappledm.vibenotes.ui.settings.SettingsScreen
 import io.github.mappledm.vibenotes.ui.theme.MonoStyle
 import io.github.mappledm.vibenotes.ui.theme.VibeTheme
+import io.github.mappledm.vibenotes.ui.theme.appFontFamily
 import io.github.mappledm.vibenotes.ui.week.WeekScreen
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
@@ -88,7 +90,8 @@ private val Tabs = listOf(
 fun VibeNotesRoot(container: AppContainer) {
     val settings by container.settings.state.collectAsStateWithLifecycle()
     val vault by container.vault.collectAsStateWithLifecycle()
-    VibeTheme(settings.theme, settings.palette) {
+    val fontFamily = remember(settings.font, settings.customFontVersion) { appFontFamily(settings.font, container.fonts) }
+    VibeTheme(settings.theme, settings.palette, fontFamily) {
         Surface(color = MaterialTheme.colorScheme.background, modifier = Modifier.fillMaxSize()) {
             val current = vault
             if (current == null) {

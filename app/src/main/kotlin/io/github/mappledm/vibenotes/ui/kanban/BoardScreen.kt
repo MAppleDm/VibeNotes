@@ -212,7 +212,7 @@ fun BoardScreen(
                             Text(
                                 "Пусто",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.outline,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(start = 12.dp, bottom = 4.dp),
                             )
                         }

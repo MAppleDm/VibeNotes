@@ -17,11 +17,14 @@ import io.github.mappledm.vibenotes.core.ai.Role
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.notes.VaultIndex
 import io.github.mappledm.vibenotes.core.privacy.AiIgnore
+import androidx.compose.ui.text.font.FontFamily
+import io.github.mappledm.vibenotes.data.AppFont
 import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.StorageLocation
 import io.github.mappledm.vibenotes.data.ThemeMode
 import io.github.mappledm.vibenotes.data.UpdateState
+import io.github.mappledm.vibenotes.ui.theme.appFontFamily
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -106,6 +109,24 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun setTheme(mode: ThemeMode) = container.settings.setTheme(mode)
     fun setPalette(palette: Palette) = container.settings.setPalette(palette)
+    fun setFont(font: AppFont) = container.settings.setFont(font)
+    fun fontFamily(font: AppFont): FontFamily = appFontFamily(font, container.fonts)
+
+    fun importFont(uri: Uri) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { container.fonts.import(uri) } }
+                .onSuccess { name ->
+                    container.settings.setCustomFont(name)
+                    notice = "Шрифт «$name» включён"
+                }
+                .onFailure { notice = it.message ?: "Не удалось загрузить шрифт" }
+        }
+    }
+
+    fun removeCustomFont() {
+        container.fonts.delete()
+        container.settings.clearCustomFont()
+    }
     fun setDefaultCalendar(id: Long?) = container.settings.setDefaultCalendar(id)
     fun setEventMinutes(value: Int) = container.settings.setEventMinutes(value)
     fun setReminder(value: Int?) = container.settings.setReminderMinutes(value)

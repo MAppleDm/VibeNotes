@@ -44,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
@@ -63,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,7 @@ import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
+import io.github.mappledm.vibenotes.data.AppFont
 import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
@@ -176,7 +179,7 @@ private fun SettingsHome(vm: SettingsViewModel, settings: AppSettings, onOpen: (
             SettingsSection.TASKS -> "Доска «${VaultPaths.baseName(settings.defaultBoard)}» · «${VaultPaths.baseName(settings.inboxNote)}»"
             SettingsSection.STORAGE -> vm.vaultName
             SettingsSection.PRIVACY -> ".aiignore и что уходит в AI"
-            SettingsSection.APPEARANCE -> paletteLabel(settings.palette) + " · " + themeLabel(settings.theme)
+            SettingsSection.APPEARANCE -> paletteLabel(settings.palette) + " · " + themeLabel(settings.theme) + " · " + fontLabel(settings)
             SettingsSection.ABOUT -> when (val u = update) {
                 is UpdateState.Available -> "Доступна версия ${u.release.versionName}"
                 is UpdateState.Downloading, is UpdateState.Ready -> "Обновление загружается"
@@ -355,6 +358,54 @@ private fun AppearanceSection(vm: SettingsViewModel, settings: AppSettings) {
             FilterChip(selected = settings.theme == mode, onClick = { vm.setTheme(mode) }, label = { Text(themeLabel(mode)) })
         }
     }
+
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) vm.importFont(uri)
+    }
+    // Font files come with all kinds of MIME types (or none), so any file is offered and checked on import.
+    val pickFont = { fontPicker.launch(arrayOf("*/*")) }
+    val customName = settings.customFontName
+    Label("Шрифт")
+    Column {
+        FontRow(vm, settings, AppFont.GOLOS, "Golos Text", "Сделан для русского интерфейса. По умолчанию")
+        FontRow(vm, settings, AppFont.SYSTEM, "Системный", "Как в остальных приложениях телефона")
+        if (customName != null) {
+            FontRow(vm, settings, AppFont.CUSTOM, customName, "Свой шрифт из файла")
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = pickFont) { Text(if (customName == null) "Загрузить .ttf" else "Заменить файл") }
+        if (customName != null) {
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = vm::removeCustomFont) { Text("Удалить") }
+        }
+    }
+    Hint("Подойдёт файл .ttf или .otf, лучше с кириллицей: каких букв нет в шрифте, те будут системными. Код и .env-заметки всегда моноширинные.")
+}
+
+@Composable
+private fun FontRow(vm: SettingsViewModel, settings: AppSettings, font: AppFont, title: String, subtitle: String) {
+    val family = remember(font, settings.customFontVersion) { vm.fontFamily(font) }
+    val selected = settings.font == font
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { vm.setFont(font) }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = { vm.setFont(font) })
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge.copy(fontFamily = family, fontWeight = FontWeight.Medium))
+            Text(
+                "Съешь же ещё этих мягких французских булок",
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = family),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 /**
@@ -509,6 +560,12 @@ private fun providerName(baseUrl: String): String =
 private fun paletteLabel(palette: Palette) = when (palette) {
     Palette.LEMON_COFFEE -> "Лимон и кофе"
     Palette.GRAPHITE -> "Графит"
+}
+
+private fun fontLabel(settings: AppSettings) = when (settings.font) {
+    AppFont.GOLOS -> "Golos Text"
+    AppFont.SYSTEM -> "системный шрифт"
+    AppFont.CUSTOM -> settings.customFontName ?: "свой шрифт"
 }
 
 private fun themeLabel(mode: ThemeMode) = when (mode) {

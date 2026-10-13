@@ -47,4 +47,4 @@ app/    Android: Jetpack Compose UI, SAF-хранилище, Calendar Provider, 
 
 ## Лицензия
 
-GPL-3.0, см. [LICENSE](LICENSE).
+GPL-3.0, см. [LICENSE](LICENSE). Шрифт Golos Text — SIL Open Font License 1.1, см. [licenses/GolosText-OFL.txt](licenses/GolosText-OFL.txt).
