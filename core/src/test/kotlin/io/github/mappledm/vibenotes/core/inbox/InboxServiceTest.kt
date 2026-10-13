@@ -150,8 +150,24 @@ class InboxServiceTest {
         val store = ChatStore(file)
         store.load()
         store.add(ChatEntry("a", ChatRole.USER, "привет", 1))
+        store.add(
+            ChatEntry(
+                "b", ChatRole.ASSISTANT, "", 2,
+                proposals = listOf(
+                    ProposalItem("p1", ActionProposal.CreateEvent("Врач", "2026-10-15", "09:00", endTime = "10:00"), ProposalStatus.APPLIED, "ok", io.github.mappledm.vibenotes.core.agent.ResultTarget.Event(7)),
+                    ProposalItem("p2", ActionProposal.AddTask("Задачи.md", "Сделать", "Купить молоко", "2026-10-16")),
+                ),
+                streaming = true,
+            ),
+        )
         val reloaded = ChatStore(file)
         reloaded.load()
-        assertEquals("привет", reloaded.entries.value.single().text)
+        assertEquals("привет", reloaded.entries.value.first().text)
+        val proposals = reloaded.entries.value.last().proposals
+        assertEquals("Врач", (proposals[0].proposal as ActionProposal.CreateEvent).title)
+        assertEquals(io.github.mappledm.vibenotes.core.agent.ResultTarget.Event(7), proposals[0].target)
+        assertEquals(ProposalStatus.PENDING, proposals[1].status)
+        // Streaming is transient state and must not survive a restart.
+        assertTrue(!reloaded.entries.value.last().streaming)
     }
 }
