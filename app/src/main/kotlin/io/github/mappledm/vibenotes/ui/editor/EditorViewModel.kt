@@ -144,7 +144,7 @@ class EditorViewModel(
         preview = !preview
     }
 
-    fun setPreview(value: Boolean) {
+    fun showPreview(value: Boolean) {
         preview = value
     }
 

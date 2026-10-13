@@ -170,15 +170,16 @@ private fun ListItemRow(
     onToggleTask: ((Int) -> Unit)?,
     onWikiLink: ((String) -> Unit)?,
 ) {
+    val checked = item.checked
     Row(
         Modifier
             .fillMaxWidth()
             .padding(start = (item.depth * 18).dp),
-        verticalAlignment = if (item.checked != null) Alignment.CenterVertically else Alignment.Top,
+        verticalAlignment = if (checked != null) Alignment.CenterVertically else Alignment.Top,
     ) {
         when {
-            item.checked != null -> Checkbox(
-                checked = item.checked,
+            checked != null -> Checkbox(
+                checked = checked,
                 onCheckedChange = onToggleTask?.let { toggle -> { _: Boolean -> toggle(item.line) } },
                 modifier = Modifier.size(32.dp),
             )
@@ -186,7 +187,7 @@ private fun ListItemRow(
             else -> Text("•", style = textStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(18.dp))
         }
         Spacer(Modifier.width(4.dp))
-        val style = if (item.checked == true) {
+        val style = if (checked == true) {
             textStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant, textDecoration = TextDecoration.LineThrough)
         } else textStyle
         Text(rememberInline(item.text, onWikiLink), style = style)

@@ -152,6 +152,7 @@ class OpenAiCompatibleClient(
                 })
             }
             message.toolCallId?.let { put("tool_call_id", it) }
+            message.reasoning?.takeIf { it.isNotEmpty() }?.let { put("reasoning_content", it) }
         }
     }
 }
@@ -161,6 +162,7 @@ internal class StreamAssembler {
     private class PartialCall(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder())
 
     private val text = StringBuilder()
+    private val reasoning = StringBuilder()
     private val calls = sortedMapOf<Int, PartialCall>()
     private var finishReason: String? = null
 
@@ -180,7 +182,10 @@ internal class StreamAssembler {
             val obj = choice as? JsonObject ?: continue
             obj["finish_reason"].asString()?.let { finishReason = it }
             val delta = obj["delta"] as? JsonObject ?: obj["message"] as? JsonObject ?: continue
-            delta["reasoning_content"].asString()?.takeIf { it.isNotEmpty() }?.let { events += LlmEvent.ReasoningDelta(it) }
+            delta["reasoning_content"].asString()?.takeIf { it.isNotEmpty() }?.let {
+                reasoning.append(it)
+                events += LlmEvent.ReasoningDelta(it)
+            }
             delta["content"].asString()?.takeIf { it.isNotEmpty() }?.let {
                 text.append(it)
                 events += LlmEvent.TextDelta(it)
@@ -208,6 +213,7 @@ internal class StreamAssembler {
             )
         },
         finishReason = finishReason,
+        reasoning = reasoning.toString(),
     )
 
     private fun JsonElement?.asString(): String? = when (this) {

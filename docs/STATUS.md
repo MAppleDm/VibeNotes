@@ -34,6 +34,7 @@
 - ✅ BYOK: DeepSeek по умолчанию, свой Base URL и модель, пресеты OpenAI и OpenRouter
 - ✅ Ключ шифруется AES-GCM ключом из Android Keystore, нигде не логируется, бэкап приложения отключён
 - ✅ Стриминг (SSE), отмена, понятные ошибки (ключ, баланс, лимиты, сеть, сервер)
+- ✅ Совместимость с `deepseek-reasoner`: рассуждение возвращается в API в пределах хода с инструментами
 - ✅ Управление контекстом: число сообщений истории; предложения кратко пересказываются в истории
 - ✅ Инструменты: `search_notes`, `read_note`, `list_tasks`, `list_calendars`, `list_calendar_events`, `create_calendar_event`, `create_note`, `append_to_note`, `add_task`
 - ⬜ `update_note` (полная перезапись заметки с показом diff)
@@ -60,5 +61,6 @@
 - ⬜ UI-тесты (Compose) и инструментальные тесты SAF и Calendar Provider
 
 ## Проверка
-- `core`: 64+ unit-теста (хранение, поиск, Kanban-формат, Markdown, клиент API на MockWebServer, инструменты, агент, выполнение действий, чат)
-- `app`: сборка в GitHub Actions (в облачной среде разработки Google Maven недоступен)
+- `core`: 66 unit-тестов (хранение, поиск, Kanban-формат, Markdown, клиент API на MockWebServer со стримингом и отменой, инструменты, агент, выполнение действий, чат)
+- `app`: исходники полностью компилируются (включая backend компилятора Compose) против JetBrains Compose и Robolectric `android-all`. В облачной среде разработки Google Maven закрыт, поэтому полную сборку APK (AGP, ресурсы, манифест) выполняет GitHub Actions
+- ⬜ Не проверено на устройстве: запуск, SAF и Calendar Provider на реальном телефоне

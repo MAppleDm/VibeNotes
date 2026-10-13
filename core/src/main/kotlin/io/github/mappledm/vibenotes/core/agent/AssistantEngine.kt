@@ -67,7 +67,12 @@ class AssistantEngine(
             }
             if (result.toolCalls.isEmpty()) break
 
-            messages += LlmMessage(Role.ASSISTANT, result.text, toolCalls = result.toolCalls)
+            messages += LlmMessage(
+                Role.ASSISTANT,
+                result.text,
+                toolCalls = result.toolCalls,
+                reasoning = result.reasoning.ifEmpty { null },
+            )
             var needsAnotherStep = false
             for (call in result.toolCalls) {
                 val tool = registry.find(call.name)

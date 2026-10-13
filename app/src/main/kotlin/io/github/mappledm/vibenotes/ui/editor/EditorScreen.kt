@@ -203,7 +203,7 @@ fun EditorScreen(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Next),
                     keyboardActions = KeyboardActions(onNext = {
                         vm.commitTitle()
-                        vm.setPreview(false)
+                        vm.showPreview(false)
                         runCatching { contentFocus.requestFocus() }
                     }),
                     modifier = Modifier

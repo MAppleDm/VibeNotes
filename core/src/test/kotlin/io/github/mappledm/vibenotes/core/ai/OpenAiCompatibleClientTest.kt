@@ -124,6 +124,45 @@ class OpenAiCompatibleClientTest {
     }
 
     @Test
+    fun reasoningIsCollectedAndSentBackWithToolCalls() = runBlocking {
+        server.enqueue(
+            sse(
+                """{"choices":[{"index":0,"delta":{"reasoning_content":"думаю"}}]}""",
+                """{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"c","type":"function","function":{"name":"list_tasks","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""",
+            ),
+        )
+        val done = client.stream(config(), LlmRequest(listOf(LlmMessage(Role.USER, "x")))).toList().last() as LlmEvent.Completed
+        assertEquals("думаю", done.reasoning)
+
+        val body = OpenAiCompatibleClient.encodeRequest(
+            config(),
+            LlmRequest(listOf(LlmMessage(Role.ASSISTANT, "", done.toolCalls, reasoning = done.reasoning))),
+            stream = true,
+        )
+        val message = Json.parseToJsonElement(body).jsonObject["messages"]!!.jsonArray[0].jsonObject
+        assertEquals("думаю", message["reasoning_content"]!!.jsonPrimitive.content)
+        assertEquals("list_tasks", message["tool_calls"]!!.jsonArray[0].jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun cancellingTheCollectorAbortsAStalledStream() = runBlocking {
+        // First chunk arrives, then the server stalls for a long time.
+        server.enqueue(
+            MockResponse()
+                .setHeader("Content-Type", "text/event-stream")
+                .setBody("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"}}]}\n\n" + "x".repeat(4096))
+                .throttleBody(64, 5, java.util.concurrent.TimeUnit.SECONDS),
+        )
+        val started = System.currentTimeMillis()
+        val first = kotlinx.coroutines.withTimeout(10_000) {
+            client.stream(config(), LlmRequest(listOf(LlmMessage(Role.USER, "x")))).first()
+        }
+        assertEquals(LlmEvent.TextDelta("Hi"), first)
+        // first() cancels the flow; the blocked read must be released promptly.
+        assertTrue(System.currentTimeMillis() - started < 9_000)
+    }
+
+    @Test
     fun urlNormalisation() {
         assertEquals("https://api.deepseek.com/chat/completions", OpenAiCompatibleClient.chatCompletionsUrl("https://api.deepseek.com/"))
         assertEquals("https://x/v1/chat/completions", OpenAiCompatibleClient.chatCompletionsUrl("https://x/v1/chat/completions"))

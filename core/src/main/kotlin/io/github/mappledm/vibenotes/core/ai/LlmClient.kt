@@ -28,6 +28,8 @@ data class LlmMessage(
     val content: String,
     val toolCalls: List<ToolCallRequest> = emptyList(),
     val toolCallId: String? = null,
+    /** DeepSeek thinking models expect their reasoning back within the same tool-calling turn. */
+    val reasoning: String? = null,
 )
 
 data class ToolSpec(val name: String, val description: String, val parameters: JsonObject)
@@ -46,6 +48,7 @@ sealed interface LlmEvent {
         val text: String,
         val toolCalls: List<ToolCallRequest>,
         val finishReason: String?,
+        val reasoning: String = "",
     ) : LlmEvent
 }
 
