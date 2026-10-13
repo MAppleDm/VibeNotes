@@ -49,6 +49,28 @@ object VaultPaths {
 
     fun isMarkdown(path: String): Boolean = extension(path) == MARKDOWN_EXTENSION
 
+    /** Plain-text formats shown as notes besides Markdown (e.g. `keys.env` for secrets). */
+    val TEXT_EXTENSIONS = setOf("txt", "env")
+
+    fun isNoteFile(path: String): Boolean = isMarkdown(path) || extension(path) in TEXT_EXTENSIONS
+
+    /** Title shown for a note: Markdown hides ".md", other formats keep their extension. */
+    fun noteTitle(path: String): String = if (isMarkdown(path)) baseName(path) else name(path)
+
+    /**
+     * File name for a note titled [title]: "keys.env" / "list.txt" keep their format,
+     * anything else becomes Markdown. [keepExtension] preserves the format on rename.
+     */
+    fun noteFileName(title: String, keepExtension: String? = null): String {
+        val safe = sanitizeFileName(title)
+        val ext = extension(safe)
+        return when {
+            ext == MARKDOWN_EXTENSION || ext in TEXT_EXTENSIONS -> safe
+            keepExtension != null && keepExtension != MARKDOWN_EXTENSION -> "$safe.$keepExtension"
+            else -> "$safe.$MARKDOWN_EXTENSION"
+        }
+    }
+
     fun isHidden(path: String): Boolean = normalize(path).split('/').any { it.startsWith(".") }
 
     /**

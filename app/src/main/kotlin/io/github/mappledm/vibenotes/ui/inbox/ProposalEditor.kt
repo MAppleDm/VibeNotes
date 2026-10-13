@@ -120,8 +120,8 @@ private fun EventFields(p: ActionProposal.CreateEvent, calendars: List<CalendarI
     OutlinedTextField(p.location.orEmpty(), { onChange(p.copy(location = it.ifBlank { null })) }, label = { Text("Место") }, singleLine = true, modifier = Modifier.fillMaxWidth())
     if (calendars.isNotEmpty()) {
         Text("Календарь", style = MaterialTheme.typography.labelLarge)
-        val selected = p.calendarId ?: calendars.firstOrNull { it.isPrimary }?.id ?: calendars.first().id
-        Selector(calendars.map { it.id to "${it.name} (${it.accountName})" }, selected, { onChange(p.copy(calendarId = it)) })
+        val selected = p.calendarId ?: -1L
+        Selector(calendars.map { it.id to it.label }, selected, { onChange(p.copy(calendarId = it)) })
     }
     Text("Напоминание", style = MaterialTheme.typography.labelLarge)
     Selector(ReminderOptions.map { it to reminderLabel(it) }, p.reminderMinutes, { onChange(p.copy(reminderMinutes = it)) })

@@ -2,6 +2,7 @@ package io.github.mappledm.vibenotes.core.agent
 
 import io.github.mappledm.vibenotes.core.calendar.CalendarException
 import io.github.mappledm.vibenotes.core.calendar.CalendarGateway
+import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.calendar.NewCalendarEvent
 import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.kanban.KanbanException
@@ -92,8 +93,8 @@ class DefaultActionExecutor(
         val calendars = calendar.writableCalendars()
         if (calendars.isEmpty()) return ActionResult.Failure("На устройстве нет календаря, доступного для записи")
         val target = calendars.firstOrNull { it.id == p.calendarId }
-            ?: calendars.firstOrNull { it.isPrimary }
-            ?: calendars.first()
+            ?: CalendarInfo.preferred(calendars)
+            ?: return ActionResult.Failure("Не выбран календарь")
         val id = calendar.insert(
             NewCalendarEvent(
                 calendarId = target.id,
@@ -107,7 +108,7 @@ class DefaultActionExecutor(
                 reminderMinutes = p.reminderMinutes,
             ),
         )
-        return ActionResult.Success("Событие добавлено в календарь «${target.name}»", ResultTarget.Event(id))
+        return ActionResult.Success("Событие сохранено в «${target.label}»", ResultTarget.Event(id))
     }
 
     private suspend fun addTask(p: ActionProposal.AddTask): ActionResult {

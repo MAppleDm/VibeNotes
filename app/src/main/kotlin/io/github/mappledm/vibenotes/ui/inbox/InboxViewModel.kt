@@ -111,7 +111,23 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
     fun hasCalendarPermission(): Boolean = container.calendar.hasPermission()
 
     fun confirm(entryId: String, proposalId: String) {
-        viewModelScope.launch(Dispatchers.Default) { inbox.confirm(entryId, proposalId) }
+        viewModelScope.launch(Dispatchers.Default) {
+            applySavedCalendar(entryId, proposalId)
+            inbox.confirm(entryId, proposalId)
+        }
+    }
+
+    private fun savedCalendar(calendars: List<CalendarInfo>): Long? =
+        container.settings.current.defaultCalendarId?.takeIf { id -> calendars.any { it.id == id } }
+
+    /** An event without a valid calendar goes to the calendar the user chose earlier. */
+    private suspend fun applySavedCalendar(entryId: String, proposalId: String) {
+        val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return
+        val event = item.proposal as? ActionProposal.CreateEvent ?: return
+        val calendars = _calendars.value
+        if (calendars.any { it.id == event.calendarId }) return
+        val saved = savedCalendar(calendars) ?: return
+        inbox.edit(entryId, proposalId, event.copy(calendarId = saved))
     }
 
     fun dismiss(entryId: String, proposalId: String) {
@@ -131,8 +147,65 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
 
     fun loadCalendars() {
         if (!container.calendar.hasPermission()) return
+        viewModelScope.launch { fetchCalendars() }
+    }
+
+    private suspend fun fetchCalendars(): List<CalendarInfo> {
+        val list = runCatching { container.calendar.writableCalendars() }.getOrDefault(emptyList())
+        _calendars.value = list
+        return list
+    }
+
+    /**
+     * The user picked a calendar on a card: use it for this event and remember it,
+     * so the next events go to the same account without asking.
+     */
+    fun chooseCalendar(entryId: String, proposalId: String, calendarId: Long) {
+        container.settings.setDefaultCalendar(calendarId)
         viewModelScope.launch {
-            _calendars.value = runCatching { container.calendar.writableCalendars() }.getOrDefault(emptyList())
+            val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return@launch
+            val event = item.proposal as? ActionProposal.CreateEvent ?: return@launch
+            inbox.edit(entryId, proposalId, event.copy(calendarId = calendarId))
+        }
+    }
+
+    /** True when the event cannot be added before the user says which calendar to use. */
+    fun needsCalendarChoice(proposal: ActionProposal, calendars: List<CalendarInfo>): Boolean =
+        proposal is ActionProposal.CreateEvent &&
+            calendars.size > 1 &&
+            calendars.none { it.id == proposal.calendarId } &&
+            savedCalendar(calendars) == null
+
+    /** Calendar the card should display for [proposal]. */
+    fun effectiveCalendar(proposal: ActionProposal.CreateEvent, calendars: List<CalendarInfo>): CalendarInfo? =
+        calendars.firstOrNull { it.id == proposal.calendarId }
+            ?: savedCalendar(calendars)?.let { id -> calendars.firstOrNull { it.id == id } }
+            ?: calendars.singleOrNull()
+
+    /** After the permission dialog: confirm right away unless a calendar still has to be chosen. */
+    fun afterPermission(entryId: String, proposalId: String, granted: Boolean) {
+        viewModelScope.launch {
+            if (!granted) {
+                inbox.confirm(entryId, proposalId)
+                return@launch
+            }
+            val calendars = fetchCalendars()
+            val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return@launch
+            val event = item.proposal as? ActionProposal.CreateEvent ?: return@launch
+            val saved = savedCalendar(calendars)
+            when {
+                calendars.any { it.id == event.calendarId } -> inbox.confirm(entryId, proposalId)
+                saved != null -> {
+                    inbox.edit(entryId, proposalId, event.copy(calendarId = saved))
+                    inbox.confirm(entryId, proposalId)
+                }
+                calendars.size == 1 -> {
+                    inbox.edit(entryId, proposalId, event.copy(calendarId = calendars.single().id))
+                    inbox.confirm(entryId, proposalId)
+                }
+                // Several accounts: leave the card pending — it now shows the calendar picker.
+                else -> Unit
+            }
         }
     }
 

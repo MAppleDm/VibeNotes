@@ -1,10 +1,13 @@
 package io.github.mappledm.vibenotes.data
 
 import android.Manifest
+import android.accounts.Account
+import android.content.ContentResolver
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.provider.CalendarContract
 import android.provider.CalendarContract.Calendars
 import android.provider.CalendarContract.Events
@@ -54,6 +57,7 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
                 Calendars.CALENDAR_COLOR,
                 Calendars.IS_PRIMARY,
                 Calendars.OWNER_ACCOUNT,
+                Calendars.ACCOUNT_TYPE,
             )
             val selection = "${Calendars.CALENDAR_ACCESS_LEVEL} >= ? AND ${Calendars.VISIBLE} = 1"
             val args = arrayOf(Calendars.CAL_ACCESS_CONTRIBUTOR.toString())
@@ -69,10 +73,18 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
                         accountName = account,
                         color = if (c.isNull(3)) null else c.getInt(3),
                         isPrimary = primaryFlag ?: (account.isNotEmpty() && account == owner),
+                        accountType = c.getString(6).orEmpty(),
                     )
                 }
             }
-            result.sortedWith(compareByDescending<CalendarInfo> { it.isPrimary }.thenBy { it.name })
+            // Google main calendars first, then other Google calendars, then device/other accounts.
+            result.sortedWith(
+                compareByDescending<CalendarInfo> { it.isGoogle && it.isPrimary }
+                    .thenByDescending { it.isGoogle }
+                    .thenByDescending { it.isPrimary }
+                    .thenBy { it.accountName.lowercase() }
+                    .thenBy { it.name.lowercase() },
+            )
         }
     }
 
@@ -153,7 +165,34 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
                 null,
             )?.use { it.moveToFirst() } ?: false
             if (!exists) throw CalendarException(CalendarException.Kind.FAILED, "Событие не найдено после создания")
+            requestSync(event.calendarId)
             id
+        }
+    }
+
+    /**
+     * Asks the account's sync adapter to push the new event now instead of on its next
+     * periodic run, so it shows up in Google Calendar on other devices quickly. Best effort.
+     */
+    private fun requestSync(calendarId: Long) {
+        runCatching {
+            resolver.query(
+                ContentUris.withAppendedId(Calendars.CONTENT_URI, calendarId),
+                arrayOf(Calendars.ACCOUNT_NAME, Calendars.ACCOUNT_TYPE),
+                null,
+                null,
+                null,
+            )?.use { c ->
+                if (!c.moveToFirst()) return
+                val name = c.getString(0) ?: return
+                val type = c.getString(1) ?: return
+                if (type.equals(CalendarContract.ACCOUNT_TYPE_LOCAL, ignoreCase = true)) return
+                val extras = Bundle().apply {
+                    putBoolean(ContentResolver.SYNC_EXTRAS_MANUAL, true)
+                    putBoolean(ContentResolver.SYNC_EXTRAS_EXPEDITED, true)
+                }
+                ContentResolver.requestSync(Account(name, type), CalendarContract.AUTHORITY, extras)
+            }
         }
     }
 
@@ -161,5 +200,11 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
         val PERMISSIONS = arrayOf(Manifest.permission.READ_CALENDAR, Manifest.permission.WRITE_CALENDAR)
 
         fun eventUri(eventId: Long) = ContentUris.withAppendedId(CalendarContract.Events.CONTENT_URI, eventId)
+
+        /** Opens an event; calendar apps need the begin/end extras to find the instance. */
+        fun viewEventIntent(eventId: Long, beginMillis: Long, endMillis: Long): android.content.Intent =
+            android.content.Intent(android.content.Intent.ACTION_VIEW, eventUri(eventId))
+                .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, beginMillis)
+                .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endMillis)
     }
 }

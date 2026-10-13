@@ -14,6 +14,7 @@ import io.github.mappledm.vibenotes.core.ai.LlmRequest
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.ai.Role
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
+import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.data.AppSettings
 import io.github.mappledm.vibenotes.data.StorageLocation
 import io.github.mappledm.vibenotes.data.ThemeMode
@@ -97,6 +98,16 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
 
     fun chooseFolder(uri: Uri) = container.chooseStorage(StorageLocation.Folder(uri.toString()))
     fun useInternalStorage() = container.chooseStorage(StorageLocation.Internal)
+
+    /** Creates .aiignore with a short how-to if needed and returns its path for the editor. */
+    fun openAiIgnore(onReady: (String) -> Unit) {
+        val notes = container.vault.value?.notes ?: return
+        viewModelScope.launch {
+            runCatching {
+                if (notes.read(AiIgnore.FILE_NAME) == null) notes.save(AiIgnore.FILE_NAME, AiIgnore.HEADER + "\n")
+            }.onSuccess { onReady(AiIgnore.FILE_NAME) }
+        }
+    }
 
     fun clearChat() {
         viewModelScope.launch { container.vault.value?.inbox?.clear() }

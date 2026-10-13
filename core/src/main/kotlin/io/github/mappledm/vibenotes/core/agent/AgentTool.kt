@@ -19,7 +19,7 @@ import java.time.ZonedDateTime
 enum class ToolKind { READ, PROPOSE }
 
 @Serializable
-enum class ActivityKind { SEARCH, READ, TASKS, CALENDAR, ERROR }
+enum class ActivityKind { SEARCH, READ, TASKS, CALENDAR, PRIVATE, ERROR }
 
 /** What the assistant looked at — shown in the chat so the user sees what was sent to the provider. */
 @Serializable

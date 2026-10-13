@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ViewColumn
@@ -162,6 +163,7 @@ fun NotesScreen(
                         onRename = { renaming = hit.note },
                         onMove = { moving = hit.note },
                         onDelete = { deleting = hit.note },
+                        onToggleAi = { vm.setHiddenFromAi(hit.note.path, false, !hit.note.hiddenFromAi) },
                         showFolder = true,
                     )
                 }
@@ -171,15 +173,28 @@ fun NotesScreen(
                 if (state.pinned.isNotEmpty()) {
                     item { SectionHeader("Закреплённые") }
                     items(state.pinned, key = { "pin:" + it.path }) { meta ->
-                        NoteRow(meta, meta.preview, true, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta }, showFolder = true)
+                        NoteRow(
+                            meta, meta.preview, true, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
+                            onToggleAi = { vm.setHiddenFromAi(meta.path, false, !meta.hiddenFromAi) },
+                            showFolder = true,
+                        )
                     }
                     item { HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant) }
                 }
                 items(state.subfolders, key = { "dir:$it" }) { path ->
-                    FolderRow(VaultPaths.name(path)) { onOpenFolder(path) }
+                    val hidden = path in state.hiddenFolders
+                    FolderRow(
+                        name = VaultPaths.name(path),
+                        hiddenFromAi = hidden,
+                        onClick = { onOpenFolder(path) },
+                        onToggleAi = { vm.setHiddenFromAi(path, true, !hidden) },
+                    )
                 }
                 items(state.notes, key = { it.path }) { meta ->
-                    NoteRow(meta, meta.preview, meta.path in state.pinnedPaths, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta })
+                    NoteRow(
+                        meta, meta.preview, meta.path in state.pinnedPaths, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
+                        onToggleAi = { vm.setHiddenFromAi(meta.path, false, !meta.hiddenFromAi) },
+                    )
                 }
                 if (state.loaded && state.notes.isEmpty() && state.subfolders.isEmpty()) {
                     item { EmptyText(if (folder.isEmpty()) "Заметок пока нет. Нажмите +, чтобы создать первую." else "Папка пуста") }
@@ -228,19 +243,34 @@ private fun EmptyText(text: String) {
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FolderRow(name: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Outlined.Folder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(14.dp))
-        Text(name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun FolderRow(name: String, hiddenFromAi: Boolean, onClick: () -> Unit, onToggleAi: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .combinedClickable(onClick = onClick, onLongClick = { menu = true })
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.Folder, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(14.dp))
+            Text(name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            if (hiddenFromAi) {
+                Icon(Icons.Outlined.Lock, "Скрыто от AI", Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(8.dp))
+            }
+            Icon(Icons.Filled.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(
+                text = { Text(if (hiddenFromAi) "Показать папку AI" else "Скрыть папку от AI") },
+                leadingIcon = { Icon(Icons.Outlined.Lock, null) },
+                onClick = { menu = false; onToggleAi() },
+            )
+        }
     }
 }
 
@@ -255,6 +285,7 @@ private fun NoteRow(
     onRename: () -> Unit,
     onMove: () -> Unit,
     onDelete: () -> Unit,
+    onToggleAi: () -> Unit,
     showFolder: Boolean = false,
 ) {
     var menu by remember { mutableStateOf(false) }
@@ -280,6 +311,10 @@ private fun NoteRow(
                         Spacer(Modifier.width(6.dp))
                         Icon(Icons.Outlined.PushPin, "Закреплено", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                     }
+                    if (meta.hiddenFromAi) {
+                        Spacer(Modifier.width(6.dp))
+                        Icon(Icons.Outlined.Lock, "Скрыто от AI", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Spacer(Modifier.weight(1f))
                     Text(Dates.modified(meta.lastModified), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -294,6 +329,7 @@ private fun NoteRow(
         }
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text(if (pinned) "Открепить" else "Закрепить") }, onClick = { menu = false; onPin() })
+            DropdownMenuItem(text = { Text(if (meta.hiddenFromAi) "Показать AI" else "Скрыть от AI") }, onClick = { menu = false; onToggleAi() })
             DropdownMenuItem(text = { Text("Переименовать") }, onClick = { menu = false; onRename() })
             DropdownMenuItem(text = { Text("Переместить") }, onClick = { menu = false; onMove() })
             DropdownMenuItem(text = { Text("Удалить") }, onClick = { menu = false; onDelete() })

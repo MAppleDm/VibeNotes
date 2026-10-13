@@ -40,6 +40,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Description
@@ -93,8 +94,11 @@ import io.github.mappledm.vibenotes.core.inbox.ChatRole
 import io.github.mappledm.vibenotes.core.inbox.ProposalItem
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
 import io.github.mappledm.vibenotes.ui.components.MarkdownView
+import io.github.mappledm.vibenotes.ui.components.OnResume
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import java.time.ZoneId
+
+private const val LOAD_ONLY = "load"
 
 private val Suggestions = listOf(
     "Завтра в 15:00 встреча с Андреем на час",
@@ -126,16 +130,22 @@ fun InboxScreen(
     var permissionDenied by rememberSaveable { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        vm.loadCalendars()
         val target = pendingConfirm
         pendingConfirm = null
         val granted = grants.isNotEmpty() && grants.values.all { it }
         if (!granted) permissionDenied = true
-        if (target != null) {
-            // Executes either way: without permission the card shows an honest failure with next steps.
+        if (target != null && target != LOAD_ONLY) {
+            // Without permission the card shows an honest failure with next steps;
+            // with it, the event is added unless a calendar still has to be chosen.
             val (entryId, proposalId) = target.split('|', limit = 2)
-            vm.confirm(entryId, proposalId)
+            vm.afterPermission(entryId, proposalId, granted)
+        } else {
+            vm.loadCalendars()
         }
+    }
+
+    fun openAppSettings() {
+        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
     }
 
     fun confirm(entryId: String, item: ProposalItem) {
@@ -149,11 +159,9 @@ fun InboxScreen(
 
     fun requestPermission(entryId: String, item: ProposalItem) {
         when {
-            vm.hasCalendarPermission() -> vm.confirm(entryId, item.id)
+            vm.hasCalendarPermission() -> vm.afterPermission(entryId, item.id, granted = true)
             // After a denial Android may stop showing the dialog: send the user to app settings.
-            permissionDenied -> context.startActivity(
-                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-            )
+            permissionDenied -> openAppSettings()
             else -> {
                 pendingConfirm = "$entryId|${item.id}"
                 permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
@@ -161,16 +169,33 @@ fun InboxScreen(
         }
     }
 
-    fun openTarget(target: ResultTarget?) {
-        when (target) {
+    fun loadCalendars() {
+        when {
+            vm.hasCalendarPermission() -> vm.loadCalendars()
+            permissionDenied -> openAppSettings()
+            else -> {
+                pendingConfirm = LOAD_ONLY
+                permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
+            }
+        }
+    }
+
+    fun openTarget(item: ProposalItem) {
+        when (val target = item.target) {
             is ResultTarget.Note -> onOpenNote(target.path)
             is ResultTarget.Board -> onOpenBoard(target.path)
             is ResultTarget.Event -> runCatching {
-                context.startActivity(Intent(Intent.ACTION_VIEW, AndroidCalendarGateway.eventUri(target.eventId)))
+                val event = item.proposal as? ActionProposal.CreateEvent
+                val zone = ZoneId.systemDefault()
+                val begin = event?.startDateTime?.atZone(zone)?.toInstant()?.toEpochMilli() ?: System.currentTimeMillis()
+                val end = event?.endDateTime?.atZone(zone)?.toInstant()?.toEpochMilli() ?: begin
+                context.startActivity(AndroidCalendarGateway.viewEventIntent(target.eventId, begin, end))
             }
             null -> Unit
         }
     }
+
+    OnResume { vm.loadCalendars() }
 
     Scaffold(
         topBar = {
@@ -223,10 +248,14 @@ fun InboxScreen(
                             onConfirm = { confirm(entry.id, it) },
                             onDismiss = { vm.dismiss(entry.id, it.id) },
                             onEdit = { editing = entry.id to it },
-                            onOpen = { openTarget(it.target) },
+                            onOpen = { openTarget(it) },
                             onRequestPermission = { requestPermission(entry.id, it) },
                             onOpenInCalendarApp = { openInCalendarApp(context, it.proposal) },
                             onRetry = { vm.retry(entry.id) },
+                            needsCalendarChoice = { vm.needsCalendarChoice(it.proposal, calendars) },
+                            selectedCalendar = { (it.proposal as? ActionProposal.CreateEvent)?.let { e -> vm.effectiveCalendar(e, calendars) } },
+                            onChooseCalendar = { item, id -> vm.chooseCalendar(entry.id, item.id, id) },
+                            onLoadCalendars = ::loadCalendars,
                             onWikiLink = { target -> vm.resolveNote(target)?.let(onOpenNote) },
                         )
                     }
@@ -325,6 +354,10 @@ private fun EntryItem(
     onOpenInCalendarApp: (ProposalItem) -> Unit,
     onRetry: () -> Unit,
     onWikiLink: (String) -> Unit,
+    needsCalendarChoice: (ProposalItem) -> Boolean,
+    selectedCalendar: (ProposalItem) -> io.github.mappledm.vibenotes.core.calendar.CalendarInfo?,
+    onChooseCalendar: (ProposalItem, Long) -> Unit,
+    onLoadCalendars: () -> Unit,
 ) {
     when (entry.role) {
         ChatRole.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -367,6 +400,10 @@ private fun EntryItem(
                     onOpen = { onOpen(item) },
                     onRequestPermission = { onRequestPermission(item) },
                     onOpenInCalendarApp = { onOpenInCalendarApp(item) },
+                    selectedCalendar = selectedCalendar(item),
+                    needsCalendarChoice = needsCalendarChoice(item),
+                    onChooseCalendar = { id -> onChooseCalendar(item, id) },
+                    onLoadCalendars = onLoadCalendars,
                 )
             }
             entry.error?.let { error ->
@@ -400,6 +437,7 @@ private fun activityIcon(kind: ActivityKind): ImageVector = when (kind) {
     ActivityKind.READ -> Icons.Outlined.Description
     ActivityKind.TASKS -> Icons.Outlined.TaskAlt
     ActivityKind.CALENDAR -> Icons.Outlined.CalendarMonth
+    ActivityKind.PRIVATE -> Icons.Outlined.Lock
     ActivityKind.ERROR -> Icons.Outlined.ErrorOutline
 }
 

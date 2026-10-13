@@ -191,7 +191,7 @@ private fun NavGraph(nav: NavHostController, openDrawer: () -> Unit) {
             )
         }
         composable<SettingsRoute> {
-            SettingsScreen(onBack = { nav.popBackStack() })
+            SettingsScreen(onBack = { nav.popBackStack() }, onOpenNote = openNote)
         }
     }
 }

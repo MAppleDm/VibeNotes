@@ -23,7 +23,7 @@ class ToolRegistry(
     val tools: List<AgentTool> = listOf(
         SearchNotesTool(notes),
         ReadNoteTool(notes),
-        ListTasksTool(kanban),
+        ListTasksTool(kanban, notes),
         ListCalendarsTool(calendar),
         ListEventsTool(calendar),
         CreateEventTool(),
@@ -52,7 +52,8 @@ class SearchNotesTool(private val notes: NotesRepository) : AgentTool {
     override suspend fun run(args: JsonObject, context: AssistantContext): ToolOutcome {
         val query = args.string("query") ?: return ToolOutcome.Error("Error: 'query' is required")
         val limit = (args.int("limit") ?: 6).coerceIn(1, 10)
-        val hits = notes.search(query, limit)
+        // Private notes (.aiignore) are filtered out before anything reaches the model.
+        val hits = notes.search(query, 200).filterNot { notes.isHiddenFromAi(it.note.path) }.take(limit)
         val label = "Поиск «$query»: " + if (hits.isEmpty()) "ничего" else "${hits.size}"
         if (hits.isEmpty()) return ToolOutcome.Data("No notes match \"$query\".", ToolActivity(ActivityKind.SEARCH, label))
         val body = hits.mapIndexed { i, hit ->
@@ -77,13 +78,20 @@ class ReadNoteTool(private val notes: NotesRepository) : AgentTool {
             "Note '$raw' not found. Use search_notes to find the exact path.",
             ToolActivity(ActivityKind.ERROR, "Заметка «$raw» не найдена"),
         )
+        if (notes.isHiddenFromAi(meta.path)) {
+            // Same answer as "not found" for the model; the user sees why.
+            return ToolOutcome.Error(
+                "Note '$raw' not found. Use search_notes to find the exact path.",
+                ToolActivity(ActivityKind.PRIVATE, "«${meta.title}» скрыта от AI — не отправлена"),
+            )
+        }
         val content = notes.read(meta.path) ?: return ToolOutcome.Error("Note '$raw' could not be read.")
         val truncated = if (content.length > MAX_NOTE_CHARS) content.take(MAX_NOTE_CHARS) + "\n…[truncated]" else content
         return ToolOutcome.Data(untrusted("note:${meta.path}", truncated), ToolActivity(ActivityKind.READ, "Прочитана «${meta.title}»"))
     }
 }
 
-class ListTasksTool(private val kanban: KanbanRepository) : AgentTool {
+class ListTasksTool(private val kanban: KanbanRepository, private val notes: NotesRepository) : AgentTool {
     override val kind = ToolKind.READ
     override val spec = ToolSpec(
         name = "list_tasks",
@@ -98,6 +106,7 @@ class ListTasksTool(private val kanban: KanbanRepository) : AgentTool {
         val board = args.string("board")
         val includeDone = args.bool("include_done") ?: false
         val tasks = kanban.allTasks()
+            .filterNot { notes.isHiddenFromAi(it.boardPath) }
             .filter { board == null || it.boardTitle.equals(board, true) || it.boardPath.equals(board, true) }
             .filter { includeDone || (!it.laneIsComplete && !it.card.checked) }
             .take(80)
@@ -125,7 +134,7 @@ class ListCalendarsTool(private val calendar: CalendarGateway) : AgentTool {
         }
         val list = calendar.writableCalendars()
         val body = if (list.isEmpty()) "No writable calendars." else list.joinToString("\n") {
-            "- id ${it.id}: ${it.name} (${it.accountName})" + if (it.isPrimary) " [primary]" else ""
+            "- id ${it.id}: ${it.label}" + if (it.isPrimary) " [primary]" else ""
         }
         return ToolOutcome.Data(untrusted("calendars", body), ToolActivity(ActivityKind.CALENDAR, "Список календарей"))
     }
@@ -279,13 +288,15 @@ class AppendToNoteTool(private val notes: NotesRepository) : AgentTool {
     override suspend fun run(args: JsonObject, context: AssistantContext): ToolOutcome {
         val text = args.string("text") ?: return ToolOutcome.Error("Error: 'text' is required")
         val requested = args.string("path")
+        val notFound = "Note '${requested ?: context.inboxNotePath}' not found. Use search_notes, or create_note for a new note."
         val path = if (requested == null) {
             context.inboxNotePath
         } else {
             notes.resolveLink(requested)?.path
                 ?: VaultPaths.normalize(requested).takeIf { it.equals(context.inboxNotePath, ignoreCase = true) }
-                ?: return ToolOutcome.Error("Note '$requested' not found. Use search_notes, or create_note for a new note.")
+                ?: return ToolOutcome.Error(notFound)
         }
+        if (notes.isHiddenFromAi(path)) return ToolOutcome.Error(notFound)
         val proposal = ActionProposal.AppendToNote(path, text)
         ProposalValidator.validate(proposal)?.let { return ToolOutcome.Error("Invalid append: $it") }
         return ToolOutcome.Propose(proposal)

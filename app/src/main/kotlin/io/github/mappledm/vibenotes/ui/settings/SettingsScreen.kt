@@ -62,7 +62,7 @@ import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenNote: (String) -> Unit) {
     val vm: SettingsViewModel = viewModel(factory = containerFactory { SettingsViewModel(it) })
     val settings by vm.settings.collectAsStateWithLifecycle()
     val hasKey by vm.hasKey.collectAsStateWithLifecycle()
@@ -166,12 +166,22 @@ fun SettingsScreen(onBack: () -> Unit) {
             Text(
                 "• ваше сообщение и последние сообщения чата (число выше);\n" +
                     "• служебный контекст: дата и время, названия досок и колонок, папок и календарей;\n" +
-                    "• заметки, задачи и события — только когда ассистент их ищет или читает. " +
+                    "• заметки, задачи и события — только когда ассистент их ищет или читает (кроме скрытых через .aiignore). " +
                     "Каждое такое действие видно в чате над ответом.\n" +
                     "Все заметки целиком никогда не отправляются. Без ключа приложение работает полностью офлайн.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Section("Приватность")
+            Text(
+                "Заметки и папки из файла .aiignore ассистент не видит вообще: их нет в поиске, чтении и списках, " +
+                    "они никогда не отправляются провайдеру. Файлы *.env скрыты всегда. " +
+                    "Скрыть заметку или папку можно долгим нажатием в списке заметок или из меню заметки.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = { vm.openAiIgnore(onOpenNote) }) { Text("Правила .aiignore") }
 
             Section("Календарь")
             if (!vm.calendarAllowed) {
@@ -181,7 +191,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             } else if (calendars.isNotEmpty()) {
                 Text("Календарь для новых событий", style = MaterialTheme.typography.labelLarge)
-                val options = listOf<Pair<Long?, String>>(null to "Основной") + calendars.map { it.id to "${it.name} (${it.accountName})" }
+                val options = listOf<Pair<Long?, String>>(null to "Спрашивать") + calendars.map { it.id to it.label }
                 Selector(options, settings.defaultCalendarId, vm::setDefaultCalendar)
             }
             Text("Длительность события по умолчанию", style = MaterialTheme.typography.labelLarge)

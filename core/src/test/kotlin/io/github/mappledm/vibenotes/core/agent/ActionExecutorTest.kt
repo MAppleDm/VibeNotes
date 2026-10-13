@@ -38,7 +38,7 @@ class ActionExecutorTest {
     @Test
     fun createsEventInChosenCalendar() = runTest {
         val result = executor.execute(event) as ActionResult.Success
-        assertEquals("Событие добавлено в календарь «Работа»", result.message)
+        assertTrue(result.message.startsWith("Событие сохранено в «Работа · me@gmail.com»"))
         assertEquals(ResultTarget.Event(101), result.target)
         val inserted = calendar.inserted.single()
         assertEquals(LocalDateTime.of(2026, 10, 14, 15, 0), inserted.start)

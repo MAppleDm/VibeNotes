@@ -26,6 +26,7 @@ data class NotesUiState(
     val loaded: Boolean = false,
     val allFolders: List<String> = emptyList(),
     val pinnedPaths: Set<String> = emptySet(),
+    val hiddenFolders: Set<String> = emptySet(),
 )
 
 class NotesViewModel(private val container: AppContainer, private val folder: String) : ViewModel() {
@@ -52,6 +53,7 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
             loaded = index.loaded,
             allFolders = listOf("") + index.folders,
             pinnedPaths = settings.pinned,
+            hiddenFolders = index.hiddenFolders,
         )
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesUiState(folder = folder))
@@ -69,6 +71,17 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
         if (clean.isEmpty()) return
         viewModelScope.launch {
             runCatching { notes.createFolder(VaultPaths.join(folder, clean)) }.onFailure { show(it.message ?: "Ошибка") }
+        }
+    }
+
+    /** Hides a note or folder from the assistant (or shows it again) via .aiignore. */
+    fun setHiddenFromAi(path: String, isDirectory: Boolean, hidden: Boolean) {
+        viewModelScope.launch {
+            runCatching { notes.setHiddenFromAi(path, isDirectory, hidden) }
+                .onSuccess { problem ->
+                    show(problem ?: if (hidden) "«${VaultPaths.noteTitle(path)}» скрыта от AI" else "«${VaultPaths.noteTitle(path)}» снова доступна AI")
+                }
+                .onFailure { show(it.message ?: "Не удалось изменить .aiignore") }
         }
     }
 
@@ -97,7 +110,7 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
             runCatching { notes.delete(path) }
                 .onSuccess { trash ->
                     container.settings.setPinned(path, false)
-                    _message.value = UndoMessage("«${VaultPaths.baseName(path)}» перемещена в корзину", trash, path)
+                    _message.value = UndoMessage("«${VaultPaths.noteTitle(path)}» перемещена в корзину", trash, path)
                 }
                 .onFailure { show(it.message ?: "Не удалось удалить") }
         }

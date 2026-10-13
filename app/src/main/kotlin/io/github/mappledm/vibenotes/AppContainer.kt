@@ -132,19 +132,23 @@ class AppContainer(private val app: Application) {
     private suspend fun assistantContext(notes: NotesRepository): AssistantContext {
         val s = settings.current
         val index = notes.index.value
-        val boards = index.boards.mapNotNull { meta ->
+        // Private boards and folders (.aiignore) are not even named to the model.
+        val boards = index.boards.filterNot { it.hiddenFromAi }.mapNotNull { meta ->
             val content = notes.cachedContent(meta.path) ?: return@mapNotNull null
             BoardInfo(meta.path, meta.title, KanbanFormat.parse(content).lanes.map { it.title })
         }
         val calendars = if (calendar.hasPermission()) runCatching { calendar.writableCalendars() }.getOrNull() else null
+        // With several calendars and no saved choice the card asks the user instead of guessing.
+        val defaultCalendar = s.defaultCalendarId?.takeIf { id -> calendars?.any { it.id == id } ?: true }
+            ?: calendars?.singleOrNull()?.id
         return AssistantContext(
             now = ZonedDateTime.now(),
             boards = boards,
             defaultBoardPath = s.defaultBoard,
             inboxNotePath = s.inboxNote,
-            folders = index.folders,
+            folders = index.folders.filterNot { it in index.hiddenFolders },
             calendars = calendars,
-            defaultCalendarId = s.defaultCalendarId?.takeIf { id -> calendars?.any { it.id == id } ?: true },
+            defaultCalendarId = defaultCalendar,
             defaultEventMinutes = s.eventMinutes,
             defaultReminderMinutes = s.reminderMinutes,
         )

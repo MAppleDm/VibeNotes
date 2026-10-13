@@ -80,6 +80,14 @@ import io.github.mappledm.vibenotes.ui.components.OnResume
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.Alignment
+import io.github.mappledm.vibenotes.ui.theme.MonoStyle
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material.icons.outlined.Lock
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -100,6 +108,13 @@ fun EditorScreen(
     OnPause { vm.saveNow() }
 
     LaunchedEffect(vm.closed) { if (vm.closed) onBack() }
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(vm.notice) {
+        vm.notice?.let {
+            vm.noticeShown()
+            snackbar.showSnackbar(it)
+        }
+    }
     LaunchedEffect(Unit) {
         if (path == null) runCatching { contentFocus.requestFocus() }
     }
@@ -124,7 +139,7 @@ fun EditorScreen(
             Key.B -> vm.bold()
             Key.I -> vm.italic()
             Key.K -> vm.link()
-            Key.E -> vm.togglePreview()
+            Key.E -> if (vm.isMarkdown) vm.togglePreview()
             Key.S -> vm.saveNow()
             Key.Y -> vm.redo()
             Key.Z -> if (event.isShiftPressed) vm.redo() else vm.undo()
@@ -153,14 +168,21 @@ fun EditorScreen(
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад") }
                 },
                 actions = {
-                    IconButton(onClick = vm::togglePreview) {
-                        if (vm.preview) Icon(Icons.Outlined.Edit, "Редактировать") else Icon(Icons.Outlined.Visibility, "Просмотр")
+                    if (vm.isMarkdown) {
+                        IconButton(onClick = vm::togglePreview) {
+                            if (vm.preview) Icon(Icons.Outlined.Edit, "Редактировать") else Icon(Icons.Outlined.Visibility, "Просмотр")
+                        }
                     }
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "Ещё") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                             if (!vm.isNew) {
                                 DropdownMenuItem(text = { Text(if (vm.isPinned) "Открепить" else "Закрепить") }, onClick = { menu = false; vm.togglePin() })
+                                DropdownMenuItem(
+                                    text = { Text(if (vm.hiddenFromAi) "Показать AI" else "Скрыть от AI") },
+                                    leadingIcon = { Icon(Icons.Outlined.Lock, null) },
+                                    onClick = { menu = false; vm.toggleHiddenFromAi() },
+                                )
                             }
                             DropdownMenuItem(text = { Text("Поделиться текстом") }, onClick = {
                                 menu = false
@@ -176,8 +198,9 @@ fun EditorScreen(
             )
         },
         bottomBar = {
-            if (!vm.preview) FormattingBar(vm)
+            if (!vm.preview && vm.isMarkdown) FormattingBar(vm)
         },
+        snackbarHost = { SnackbarHost(snackbar) },
     ) { padding ->
         Column(
             Modifier
@@ -211,6 +234,13 @@ fun EditorScreen(
                         .onFocusChanged { if (!it.isFocused && !vm.isNew) vm.commitTitle() },
                 )
             }
+            if (vm.hiddenFromAi) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 10.dp)) {
+                    Icon(Icons.Outlined.Lock, null, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Скрыто от AI — ассистент не видит эту заметку", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                }
+            }
             if (vm.preview) {
                 if (vm.content.text.isBlank()) {
                     Text("Пустая заметка. Нажмите ✎, чтобы писать.", color = colors.onSurfaceVariant)
@@ -224,14 +254,18 @@ fun EditorScreen(
             } else if (vm.loaded) {
                 Box {
                     if (vm.content.text.isEmpty()) {
-                        Text("Начните писать… Markdown поддерживается", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                        Text(
+                            if (vm.isMarkdown) "Начните писать… Markdown поддерживается" else "Обычный текст, например KEY=value",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = colors.onSurfaceVariant,
+                        )
                     }
                     BasicTextField(
                         value = vm.content,
                         onValueChange = vm::onContentChange,
-                        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
                         cursorBrush = SolidColor(colors.primary),
-                        visualTransformation = transformation,
+                        visualTransformation = if (vm.isMarkdown) transformation else VisualTransformation.None,
+                        textStyle = if (vm.isMarkdown) MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface) else MonoStyle.copy(color = colors.onSurface),
                         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                         modifier = Modifier
                             .fillMaxWidth()

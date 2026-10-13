@@ -40,7 +40,7 @@ class EditorViewModel(
 
     var path by mutableStateOf(initialPath)
         private set
-    var title by mutableStateOf(initialPath?.let { VaultPaths.baseName(it) } ?: "")
+    var title by mutableStateOf(initialPath?.let { VaultPaths.noteTitle(it) } ?: "")
         private set
     var content by mutableStateOf(TextFieldValue(""))
         private set
@@ -56,6 +56,35 @@ class EditorViewModel(
         private set
 
     val isNew: Boolean get() = path == null
+
+    /** .txt/.env and service files are plain text: no Markdown preview or highlighting. */
+    val isMarkdown: Boolean get() = path?.let { VaultPaths.isMarkdown(it) } ?: true
+
+    /** Service files (".aiignore") keep their exact name. */
+    private val isServiceFile: Boolean get() = path?.let { VaultPaths.isHidden(it) } ?: false
+
+    var hiddenFromAi by mutableStateOf(initialPath?.let { notes.isHiddenFromAi(it) } ?: false)
+        private set
+
+    var notice by mutableStateOf<String?>(null)
+        private set
+
+    fun noticeShown() {
+        notice = null
+    }
+
+    fun toggleHiddenFromAi() {
+        val p = path ?: return
+        viewModelScope.launch {
+            val target = !hiddenFromAi
+            runCatching { notes.setHiddenFromAi(p, isDirectory = false, hidden = target) }
+                .onSuccess { problem ->
+                    hiddenFromAi = notes.isHiddenFromAi(p)
+                    notice = problem ?: if (hiddenFromAi) "Заметка скрыта от AI" else "Заметка снова доступна AI"
+                }
+                .onFailure { notice = it.message ?: "Не удалось изменить .aiignore" }
+        }
+    }
     val isPinned: Boolean get() = path?.let { it in container.settings.current.pinned } ?: false
 
     private var lastSavedText = ""
@@ -94,7 +123,8 @@ class EditorViewModel(
                 content = TextFieldValue(text)
                 lastSavedText = text
                 // Notes with content open in read mode, like a document; empty ones go straight to editing.
-                preview = text.isNotBlank()
+                preview = text.isNotBlank() && VaultPaths.isMarkdown(p)
+                hiddenFromAi = notes.isHiddenFromAi(p)
             }
             loaded = true
         }
@@ -269,18 +299,19 @@ class EditorViewModel(
         val current = path ?: return
         val desired = VaultPaths.sanitizeFileName(title)
         if (desired.isEmpty()) {
-            title = VaultPaths.baseName(current)
+            title = VaultPaths.noteTitle(current)
             return
         }
-        if (desired == VaultPaths.baseName(current)) return
+        if (isServiceFile || desired == VaultPaths.noteTitle(current)) return
         try {
             val newPath = notes.rename(current, desired)
             container.settings.renamePinned(current, newPath)
             path = newPath
-            title = VaultPaths.baseName(newPath)
+            title = VaultPaths.noteTitle(newPath)
+            hiddenFromAi = notes.isHiddenFromAi(newPath)
         } catch (e: Exception) {
             status = SaveStatus.Failed(e.message ?: "Не удалось переименовать")
-            title = VaultPaths.baseName(current)
+            title = VaultPaths.noteTitle(current)
         }
     }
 

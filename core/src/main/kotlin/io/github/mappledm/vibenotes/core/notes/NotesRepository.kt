@@ -3,6 +3,7 @@ package io.github.mappledm.vibenotes.core.notes
 import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
 import io.github.mappledm.vibenotes.core.markdown.Frontmatter
 import io.github.mappledm.vibenotes.core.markdown.MarkdownText
+import io.github.mappledm.vibenotes.core.privacy.AiIgnore
 import io.github.mappledm.vibenotes.core.storage.FileEntry
 import io.github.mappledm.vibenotes.core.storage.FileStore
 import io.github.mappledm.vibenotes.core.storage.StorageException
@@ -23,8 +24,10 @@ data class NoteMeta(
     val kind: NoteKind = NoteKind.NOTE,
     val tags: Set<String> = emptySet(),
     val preview: String = "",
+    /** Listed in .aiignore (or a built-in rule): the assistant never sees this note. */
+    val hiddenFromAi: Boolean = false,
 ) {
-    val title: String get() = VaultPaths.baseName(path)
+    val title: String get() = VaultPaths.noteTitle(path)
     val folder: String get() = VaultPaths.parent(path)
 }
 
@@ -32,6 +35,7 @@ data class VaultIndex(
     val notes: List<NoteMeta>,
     val folders: List<String>,
     val loaded: Boolean,
+    val hiddenFolders: Set<String> = emptySet(),
 ) {
     val boards: List<NoteMeta> get() = notes.filter { it.kind == NoteKind.BOARD }
 
@@ -56,6 +60,8 @@ class NotesRepository(private val store: FileStore) {
     // Concurrent: searches read it from UI threads while refreshes write from IO.
     private val cache = ConcurrentHashMap<String, Cached>()
     private var folders: List<String> = emptyList()
+    @Volatile
+    private var aiIgnore: AiIgnore = AiIgnore.parse(null)
     private val _index = MutableStateFlow(VaultIndex.EMPTY)
 
     val index: StateFlow<VaultIndex> = _index.asStateFlow()
@@ -64,8 +70,9 @@ class NotesRepository(private val store: FileStore) {
     /** Re-scans the folder. Cheap when nothing changed. */
     suspend fun refresh(): VaultIndex = mutex.withLock {
         val entries = store.listAll()
+        aiIgnore = AiIgnore.parse(runCatching { store.read(AiIgnore.FILE_NAME) }.getOrNull())
         folders = entries.filter { it.isDirectory }.map { it.path }.sorted()
-        val markdown = entries.filter { !it.isDirectory && VaultPaths.isMarkdown(it.path) }
+        val markdown = entries.filter { !it.isDirectory && VaultPaths.isNoteFile(it.path) }
         val present = markdown.map { it.path }.toSet()
         cache.keys.retainAll(present)
 
@@ -85,10 +92,14 @@ class NotesRepository(private val store: FileStore) {
     }
 
     private fun publish(loaded: Boolean, extra: List<NoteMeta> = emptyList()): VaultIndex {
+        val rules = aiIgnore
         val known = cache.values.map { it.meta }
         val knownPaths = known.map { it.path }.toSet()
-        val notes = (known + extra.filter { it.path !in knownPaths }).sortedByDescending { it.lastModified }
-        val index = VaultIndex(notes, folders, loaded)
+        val notes = (known + extra.filter { it.path !in knownPaths })
+            .map { it.copy(hiddenFromAi = rules.isHidden(it.path)) }
+            .sortedByDescending { it.lastModified }
+        val hiddenFolders = folders.filter { rules.isHidden(it, isDirectory = true) }.toSet()
+        val index = VaultIndex(notes, folders, loaded, hiddenFolders)
         _index.value = index
         return index
     }
@@ -100,6 +111,7 @@ class NotesRepository(private val store: FileStore) {
         kind = if (KanbanFormat.isBoard(content)) NoteKind.BOARD else NoteKind.NOTE,
         tags = MarkdownText.tags(content),
         preview = MarkdownText.preview(content),
+        hiddenFromAi = aiIgnore.isHidden(entry.path),
     )
 
     fun cachedContent(path: String): String? = cache[VaultPaths.normalize(path)]?.content
@@ -110,6 +122,7 @@ class NotesRepository(private val store: FileStore) {
     suspend fun read(path: String): String? {
         val normalized = VaultPaths.normalize(path)
         val content = store.read(normalized) ?: return null
+        if (!isIndexed(normalized)) return content
         mutex.withLock {
             val entry = store.stat(normalized)
             if (entry != null) cache[normalized] = Cached(buildMeta(entry, content), content)
@@ -127,7 +140,7 @@ class NotesRepository(private val store: FileStore) {
     /** Creates a note with a unique file name derived from [title]. */
     suspend fun create(folder: String, title: String, content: String = ""): NoteMeta = mutex.withLock {
         val safeTitle = VaultPaths.sanitizeFileName(title).ifEmpty { DEFAULT_TITLE }
-        val path = uniquePath(VaultPaths.join(folder, VaultPaths.markdownFileName(safeTitle)))
+        val path = uniquePath(VaultPaths.join(folder, VaultPaths.noteFileName(safeTitle)))
         store.write(path, content)
         if (folder.isNotEmpty() && folder !in folders) folders = (folders + folder).sorted()
         updateCacheAfterWrite(path, content)
@@ -150,12 +163,14 @@ class NotesRepository(private val store: FileStore) {
         val normalized = VaultPaths.normalize(path)
         val safeTitle = VaultPaths.sanitizeFileName(newTitle)
         if (safeTitle.isEmpty()) throw StorageException("Название не может быть пустым")
-        val target = VaultPaths.join(VaultPaths.parent(normalized), VaultPaths.markdownFileName(safeTitle))
+        val fileName = VaultPaths.noteFileName(safeTitle, keepExtension = VaultPaths.extension(normalized))
+        val target = VaultPaths.join(VaultPaths.parent(normalized), fileName)
         if (target == normalized) return@withLock normalized
         if (!target.equals(normalized, ignoreCase = true) && store.stat(target) != null) {
-            throw StorageException("Заметка «$safeTitle» уже существует")
+            throw StorageException("Заметка «${VaultPaths.noteTitle(target)}» уже существует")
         }
         moveCached(normalized, target)
+        followIgnoreRule(normalized, target)
         target
     }
 
@@ -164,6 +179,7 @@ class NotesRepository(private val store: FileStore) {
         val target = uniquePath(VaultPaths.join(newFolder, VaultPaths.name(normalized)))
         if (target == normalized) return@withLock normalized
         moveCached(normalized, target)
+        followIgnoreRule(normalized, target)
         target
     }
 
@@ -199,9 +215,17 @@ class NotesRepository(private val store: FileStore) {
         updateCacheAfterWrite(to, content)
     }
 
+    /** Only visible note files are indexed; service files like .aiignore are not notes. */
+    private fun isIndexed(path: String): Boolean = VaultPaths.isNoteFile(path) && !VaultPaths.isHidden(path)
+
     private suspend fun updateCacheAfterWrite(path: String, content: String): NoteMeta {
         val entry = store.stat(path) ?: FileEntry(path, false, System.currentTimeMillis(), content.length.toLong())
         val meta = buildMeta(entry, content)
+        if (path.equals(AiIgnore.FILE_NAME, ignoreCase = true)) aiIgnore = AiIgnore.parse(content)
+        if (!isIndexed(path)) {
+            publish(loaded = _index.value.loaded)
+            return meta
+        }
         cache[path] = Cached(meta, content)
         val parent = VaultPaths.parent(path)
         if (parent.isNotEmpty() && parent !in folders) folders = (folders + parent).sorted()
@@ -222,13 +246,55 @@ class NotesRepository(private val store: FileStore) {
         return candidate
     }
 
+    // --- privacy ----------------------------------------------------------------------------
+
+    /** True if the assistant must never see [path] (see [AiIgnore]). */
+    fun isHiddenFromAi(path: String, isDirectory: Boolean = false): Boolean = aiIgnore.isHidden(path, isDirectory)
+
+    /** The .aiignore rule hiding [path], for explaining why it cannot simply be un-hidden. */
+    fun aiRuleFor(path: String, isDirectory: Boolean = false): AiIgnore.Rule? = aiIgnore.matchingRule(path, isDirectory)
+
+    /**
+     * Hides or shows a note/folder for the assistant by editing `.aiignore`.
+     * Returns a user-facing problem when a broader rule keeps it hidden.
+     */
+    suspend fun setHiddenFromAi(path: String, isDirectory: Boolean, hidden: Boolean): String? = mutex.withLock {
+        val rule = AiIgnore.exactRule(path, isDirectory)
+        val current = store.read(AiIgnore.FILE_NAME)
+        val updated = if (hidden) AiIgnore.addRule(current, rule) else AiIgnore.removeRule(current, rule)
+        if (updated != current) {
+            store.write(AiIgnore.FILE_NAME, updated)
+            aiIgnore = AiIgnore.parse(updated)
+            publish(loaded = _index.value.loaded)
+        }
+        if (!hidden) {
+            aiIgnore.matchingRule(path, isDirectory)?.let { remaining ->
+                return@withLock if (remaining.builtIn) {
+                    "Файлы ${remaining.pattern} всегда скрыты от AI"
+                } else {
+                    "Скрыто правилом «${remaining.pattern}» в .aiignore"
+                }
+            }
+        }
+        null
+    }
+
+    /** Keeps an exact .aiignore rule pointing at a note after it was renamed or moved. */
+    private suspend fun followIgnoreRule(from: String, to: String) {
+        val current = store.read(AiIgnore.FILE_NAME) ?: return
+        val updated = AiIgnore.renameRule(current, from, to) ?: return
+        store.write(AiIgnore.FILE_NAME, updated)
+        aiIgnore = AiIgnore.parse(updated)
+        publish(loaded = _index.value.loaded)
+    }
+
     /** Finds a note for a [[wiki link]] target: exact path, then title match (case-insensitive). */
     fun resolveLink(target: String): NoteMeta? {
         val clean = target.substringBefore('#').substringBefore('|').trim()
         if (clean.isEmpty()) return null
-        val asPath = VaultPaths.normalize(if (VaultPaths.isMarkdown(clean)) clean else "$clean.md")
+        val asPath = VaultPaths.normalize(if (VaultPaths.isNoteFile(clean)) clean else "$clean.md")
         cache[asPath]?.let { return it.meta }
-        val title = VaultPaths.baseName(asPath)
+        val title = VaultPaths.noteTitle(asPath)
         return cache.values.map { it.meta }
             .filter { it.title.equals(title, ignoreCase = true) }
             .minByOrNull { it.path.count { c -> c == '/' } }

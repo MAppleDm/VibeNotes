@@ -11,7 +11,30 @@ data class CalendarInfo(
     val accountName: String,
     val color: Int?,
     val isPrimary: Boolean,
-)
+    /** e.g. "com.google"; "LOCAL" for calendars that never leave the device. */
+    val accountType: String = GOOGLE_ACCOUNT_TYPE,
+) {
+    val isGoogle: Boolean get() = accountType == GOOGLE_ACCOUNT_TYPE
+    val isLocal: Boolean get() = accountType.equals(LOCAL_ACCOUNT_TYPE, ignoreCase = true)
+
+    /** "Работа · me@gmail.com", or just the address for an account's main calendar. */
+    val label: String
+        get() {
+            val base = if (name.equals(accountName, ignoreCase = true) || accountName.isBlank()) name else "$name · $accountName"
+            return if (isLocal) "$base (только на телефоне)" else base
+        }
+
+    companion object {
+        const val GOOGLE_ACCOUNT_TYPE = "com.google"
+        const val LOCAL_ACCOUNT_TYPE = "LOCAL"
+
+        /** Default when the user has not chosen: Google main calendar first. */
+        fun preferred(calendars: List<CalendarInfo>): CalendarInfo? =
+            calendars.firstOrNull { it.isGoogle && it.isPrimary }
+                ?: calendars.firstOrNull { it.isPrimary }
+                ?: calendars.firstOrNull()
+    }
+}
 
 data class CalendarEvent(
     val eventId: Long,

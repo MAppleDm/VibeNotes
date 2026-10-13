@@ -3,6 +3,7 @@ package io.github.mappledm.vibenotes.ui.inbox
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -37,6 +38,7 @@ import io.github.mappledm.vibenotes.core.inbox.ProposalItem
 import io.github.mappledm.vibenotes.core.inbox.ProposalStatus
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import io.github.mappledm.vibenotes.ui.components.Dates
+import io.github.mappledm.vibenotes.ui.components.Selector
 import io.github.mappledm.vibenotes.ui.components.reminderLabel
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
 import java.time.LocalDate
@@ -55,6 +57,10 @@ fun ProposalCard(
     onOpen: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenInCalendarApp: () -> Unit,
+    selectedCalendar: CalendarInfo?,
+    needsCalendarChoice: Boolean,
+    onChooseCalendar: (Long) -> Unit,
+    onLoadCalendars: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val p = item.proposal
@@ -71,7 +77,15 @@ fun ProposalCard(
             }
             val contentColor = if (dimmed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
             when (p) {
-                is ActionProposal.CreateEvent -> EventDetails(p, calendars, contentColor)
+                is ActionProposal.CreateEvent -> EventDetails(
+                    p = p,
+                    calendars = calendars,
+                    selected = selectedCalendar,
+                    editable = item.status == ProposalStatus.PENDING || item.status == ProposalStatus.FAILED,
+                    color = contentColor,
+                    onChoose = onChooseCalendar,
+                    onLoad = onLoadCalendars,
+                )
                 is ActionProposal.AddTask -> {
                     Text(p.title, style = MaterialTheme.typography.titleMedium, color = contentColor)
                     Detail("Доска «${VaultPaths.baseName(p.boardPath)}» → ${p.lane}")
@@ -93,13 +107,21 @@ fun ProposalCard(
                 }
             }
             Spacer(Modifier.size(2.dp))
-            Footer(item, onConfirm, onDismiss, onEdit, onOpen, onRequestPermission, onOpenInCalendarApp)
+            Footer(item, needsCalendarChoice, onConfirm, onDismiss, onEdit, onOpen, onRequestPermission, onOpenInCalendarApp)
         }
     }
 }
 
 @Composable
-private fun EventDetails(p: ActionProposal.CreateEvent, calendars: List<CalendarInfo>, color: androidx.compose.ui.graphics.Color) {
+private fun EventDetails(
+    p: ActionProposal.CreateEvent,
+    calendars: List<CalendarInfo>,
+    selected: CalendarInfo?,
+    editable: Boolean,
+    color: androidx.compose.ui.graphics.Color,
+    onChoose: (Long) -> Unit,
+    onLoad: () -> Unit,
+) {
     Text(p.title, style = MaterialTheme.typography.titleMedium, color = color)
     val date = runCatching { LocalDate.parse(p.date) }.getOrNull()
     val day = date?.let { Dates.short(it) + if (it == LocalDate.now()) " (сегодня)" else if (it == LocalDate.now().plusDays(1)) " (завтра)" else "" } ?: p.date
@@ -110,14 +132,26 @@ private fun EventDetails(p: ActionProposal.CreateEvent, calendars: List<Calendar
     Text("$day · $time", style = MaterialTheme.typography.bodyLarge, color = color)
     p.location?.let { DetailWithIcon(Icons.Outlined.Place, it) }
     if (p.reminderMinutes != null) DetailWithIcon(Icons.Outlined.Notifications, "Напоминание ${reminderLabel(p.reminderMinutes)}")
-    val calendarName = calendars.firstOrNull { it.id == p.calendarId }?.name
-        ?: calendars.firstOrNull { it.isPrimary }?.name
-    Detail("Календарь: " + (calendarName ?: "по умолчанию"))
+    when {
+        !editable -> Detail("Календарь: " + (selected?.label ?: "—"))
+        calendars.isEmpty() -> TextButton(onClick = onLoad, contentPadding = PaddingValues(0.dp)) {
+            Icon(Icons.Outlined.Event, null, Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Выбрать календарь и аккаунт")
+        }
+        else -> Selector(
+            options = calendars.map { it.id to it.label },
+            selected = selected?.id ?: -1L,
+            onSelect = onChoose,
+            placeholder = "Выберите календарь",
+        )
+    }
 }
 
 @Composable
 private fun Footer(
     item: ProposalItem,
+    needsCalendarChoice: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
@@ -126,11 +160,16 @@ private fun Footer(
     onOpenInCalendarApp: () -> Unit,
 ) {
     when (item.status) {
-        ProposalStatus.PENDING -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onDismiss) { Text("Отмена") }
-            TextButton(onClick = onEdit) { Text("Изменить") }
-            Spacer(Modifier.width(4.dp))
-            Button(onClick = onConfirm) { Text(confirmLabel(item.proposal)) }
+        ProposalStatus.PENDING -> Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
+            if (needsCalendarChoice) {
+                Text("На телефоне несколько аккаунтов — выберите календарь выше", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onDismiss) { Text("Отмена") }
+                TextButton(onClick = onEdit) { Text("Изменить") }
+                Spacer(Modifier.width(4.dp))
+                Button(onClick = onConfirm, enabled = !needsCalendarChoice) { Text(confirmLabel(item.proposal)) }
+            }
         }
         ProposalStatus.APPLYING -> Row(verticalAlignment = Alignment.CenterVertically) {
             CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -157,7 +196,7 @@ private fun Footer(
                 } else {
                     TextButton(onClick = onDismiss) { Text("Отмена") }
                     TextButton(onClick = onEdit) { Text("Изменить") }
-                    Button(onClick = onConfirm) { Text("Повторить") }
+                    Button(onClick = onConfirm, enabled = !needsCalendarChoice) { Text("Повторить") }
                 }
             }
         }
