@@ -2,18 +2,42 @@ name: Android CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess
+          tag = os.environ['GITHUB_REF_NAME']
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', tag):
+                  raise SystemExit('Release tags must use vMAJOR.MINOR.PATCH, for example v0.1.18')
+              subprocess.run(['git', 'merge-base', '--is-ancestor', 'HEAD', 'origin/main'], check=True)
+              version = tag[1:]
+          else:
+              version = '0.1.' + os.environ['GITHUB_RUN_NUMBER']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('version=' + version + '\n')
+          PY
 
       - uses: actions/setup-java@v4
         with:
@@ -22,66 +46,40 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
-      - name: Core unit tests (storage, Kanban, Markdown, AI client, tools)
+      - name: Core unit tests
         run: ./gradlew :core:test --stacktrace
 
-      - name: Regex patterns compile on Android's ICU engine
+      - name: Check regex compatibility with Android ICU
         run: python3 tools/check_icu_regex.py core/src/main app/src/main
 
       - name: Build debug APK
         env:
           VERSION_CODE: ${{ github.run_number }}
+          VERSION_NAME: ${{ steps.version.outputs.version }}
         run: ./gradlew :app:assembleDebug --stacktrace
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk VibeNotes.apk
+      - name: Prepare release files
+        env:
+          VERSION_NAME: ${{ steps.version.outputs.version }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk VibeNotes.apk
+          python3 tools/make_version_json.py \
+            --apk VibeNotes.apk \
+            --code "$GITHUB_RUN_NUMBER" \
+            --name "$VERSION_NAME" \
+            --commit "$GITHUB_SHA" \
+            --changelog CHANGELOG.md \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION_NAME/VibeNotes.apk" \
+            --out version.json
+          sha256sum VibeNotes.apk > SHA256SUMS
 
-      # version.json is what the app checks for updates: version, APK link, SHA-256, what's new.
-      - name: Describe the build for the in-app updater
-        run: >
-          python3 tools/make_version_json.py
-          --apk VibeNotes.apk
-          --code ${{ github.run_number }}
-          --name 0.1.${{ github.run_number }}
-          --commit ${{ github.sha }}
-          --changelog CHANGELOG.md
-          --url https://github.com/${{ github.repository }}/releases/download/latest-build/VibeNotes.apk
-          --out version.json
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: vibenotes-debug-apk
-          path: VibeNotes.apk
-
-      # A fixed "latest-build" release gives a stable link that opens in a phone browser:
-      # https://github.com/<owner>/<repo>/releases/download/latest-build/VibeNotes.apk
-      - name: Move latest-build tag
-        if: github.event_name != 'pull_request'
-        run: |
-          git tag -f latest-build
-          git push -f origin latest-build
-
-      - name: Publish latest build
-        if: github.event_name != 'pull_request'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest-build
-          name: Последняя сборка
-          body: |
-            Debug-сборка с коммита ${{ github.sha }} (ветка ${{ github.ref_name }}).
-            Скачать на телефон: VibeNotes.apk ниже. Ставится поверх предыдущей версии.
-          prerelease: false
-          make_latest: true
-          files: VibeNotes.apk
-          overwrite_files: true
-
-      # Last, so phones only learn about a version once its APK is already in place.
-      - name: Publish version manifest
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload latest-build version.json --clobber --repo ${{ github.repository }}
+          path: |
+            VibeNotes.apk
+            version.json
+            SHA256SUMS
 
       - name: Upload test reports
         if: failure()
@@ -89,3 +87,72 @@ jobs:
         with:
           name: test-reports
           path: core/build/reports/tests
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag' && github.repository == 'MAppleDm/VibeNotes'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: vibenotes-release
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: vibenotes-debug-apk
+
+      - name: Require a newer version and increasing Android version code
+        run: |
+          gh release view --json tagName > previous-release.json
+          gh release download --pattern version.json --dir previous
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          pattern = r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
+          current = os.environ['RELEASE_TAG']
+          previous = json.loads(Path('previous-release.json').read_text())['tagName']
+          def version(tag):
+              match = re.fullmatch(pattern, tag)
+              if not match:
+                  raise SystemExit('Non-semantic release tag: ' + tag)
+              return tuple(map(int, match.groups()))
+          if version(current) <= version(previous):
+              raise SystemExit('Publish a new version; never overwrite a published release')
+          manifest = json.loads(Path('version.json').read_text())
+          older = json.loads(Path('previous/version.json').read_text())
+          if manifest['versionCode'] <= older['versionCode']:
+              raise SystemExit('Android versionCode must increase')
+          if manifest['versionName'] != current[1:]:
+              raise SystemExit('APK manifest version must match the tag')
+          notes = manifest['notes'] or 'See CHANGELOG.md for details.'
+          Path('release-notes.md').write_text(
+              '## Changes\n\n' + notes + '\n\n## Install\n\n'
+              'Download `VibeNotes.apk` for Android 8.0 or newer. '
+              'This is a development APK with the existing shared debug signing key. '
+              'Android confirms installation. The package and signing identity are unchanged.\n\n'
+              'SHA-256: `' + manifest['sha256'] + '`\n', encoding='utf-8')
+          Path('legacy-notes.md').write_text(
+              'Compatibility channel for older installed versions. '
+              'Download the numbered release: https://github.com/' + os.environ['GITHUB_REPOSITORY']
+              + '/releases/tag/' + current + '\n', encoding='utf-8')
+          PY
+
+      - name: Publish a separate versioned release
+        run: |
+          gh release create "$RELEASE_TAG" VibeNotes.apk version.json SHA256SUMS \
+            --draft --verify-tag --title "$RELEASE_TAG" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest
+
+      - name: Preserve updates for older installations
+        run: |
+          gh release upload latest-build VibeNotes.apk --clobber
+          gh release upload latest-build version.json --clobber
+          gh release edit latest-build --prerelease --latest=false \
+            --title "$RELEASE_TAG — legacy update channel" --notes-file legacy-notes.md
