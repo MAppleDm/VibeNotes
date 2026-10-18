@@ -15,7 +15,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /**
- * What CI publishes next to the APK as `version.json` on the "latest-build" release.
+ * What CI publishes next to the APK as `version.json` on each versioned release.
  * [versionCode] grows with every build; [sha256] lets the app check the download.
  */
 @Serializable
@@ -127,6 +127,6 @@ class UpdateClient(
     }
 
     companion object {
-        const val MANIFEST_URL = "https://github.com/MAppleDm/VibeNotes/releases/download/latest-build/version.json"
+        const val MANIFEST_URL = "https://github.com/MAppleDm/VibeNotes/releases/latest/download/version.json"
     }
 }

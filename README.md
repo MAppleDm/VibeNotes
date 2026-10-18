@@ -1,52 +1,59 @@
 # VibeNotes
 
-Заметки, задачи и календарь на Android через одно окно чата.
+[![Android CI](https://github.com/MAppleDm/VibeNotes/actions/workflows/android.yml/badge.svg?branch=main)](https://github.com/MAppleDm/VibeNotes/actions/workflows/android.yml) [![Release](https://img.shields.io/github/v/release/MAppleDm/VibeNotes)](https://github.com/MAppleDm/VibeNotes/releases/latest) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
 
-Пишете как в мессенджере: «в четверг с утра к врачу», и AI (DeepSeek или любой OpenAI-совместимый API) предлагает карточку «Событие в календаре: Чт, 15 окт · 09:00–10:00» с кнопкой **В календарь**. Без вашего подтверждения ничего не создаётся. Заметки и доски хранятся в обычных `.md` файлах, их можно открыть в Obsidian на ПК.
+**English** · [Русский](README.ru.md)
 
-- **Входящие (чат).** Главный экран. Сообщение превращается в событие, задачу или заметку, а на вопросы вроде «что у меня на неделе?» ассистент отвечает по вашим данным. Чат — черновик на сегодня: при первом открытии нового дня он очищается сам. Без ключа AI сообщения сохраняются в заметку `Входящие.md`.
-- **Канбан.** Доска хранится в одном `.md` файле в формате плагина Obsidian Kanban. Есть колонки, сроки (`@{2026-10-16}`) и перенос карточек.
-- **Напоминание о задачах.** Раз в неделю, в выбранный день и время, приходит одно уведомление со списком задач и просроченным. Всё считается по файлам на телефоне.
-- **Неделя.** События календаря и задачи со сроком по дням, плюс просроченное.
-- **Заметки.** Markdown-редактор с подсветкой, режимом просмотра, списками задач, `[[ссылками]]`, тегами, папками, поиском, закреплением и автосохранением.
-- **Календарь.** События пишутся через Android Calendar Provider в выбранный календарь Google-аккаунта на телефоне, и Android сам синхронизирует его с Google Calendar. OAuth и сервер не нужны. Если аккаунтов несколько, календарь выбирается в карточке, и выбор запоминается.
-- **Правки из чата.** «Перенеси встречу на 10», «удали событие», «отметь задачу готовой», «перенеси задачу на пятницу»: ассистент показывает карточку «было → стало» и выполняет только после подтверждения. У выполненных действий есть «Отменить».
-- **Приватность.** Заметки и папки из `.aiignore` (как `.gitignore`) и все `*.env` ассистент не видит вообще.
-- **Настройка ассистента.** В «Настройки → Ассистент» можно дать ему свои инструкции в `AGENTS.md` (как agents.md на ПК), разрешить часть действий без подтверждения, ограничить, что он видит, и выбрать, сколько он помнит. По умолчанию он только предлагает.
+Markdown notes, Kanban tasks, and your Android calendar through one chat interface.
 
-Подробнее: [архитектура и решения](docs/ARCHITECTURE.md), [что готово и что нет](docs/STATUS.md).
+Write “doctor on Thursday morning” and the assistant proposes an event you can review before adding it. Notes and boards stay in ordinary Markdown files, including Obsidian Kanban-compatible boards.
 
-## Принципы
+## Features
 
-- Данные ваши: обычные Markdown-файлы в выбранной папке.
-- Нет аккаунтов, своего сервера и телеметрии.
-- BYOK: ключ API шифруется ключом из Android Keystore.
-- AI предлагает, система выполняет и только после подтверждения (или по правилу «без подтверждения», которое вы включили сами). Ошибку API никогда не выдаём за успех.
-- Всё, что ассистент прочитал (поиск, заметка, календарь), видно в чате над ответом: ровно это и отправлено провайдеру.
+- **One inbox:** turn messages into notes, tasks, or calendar proposals; review changes before applying them and undo completed actions.
+- **Markdown notes:** edit and preview, search, tags, folders, checklists, and `[[internal links]]`.
+- **Tasks and week view:** Kanban boards, due dates, and a weekly reminder.
+- **Android calendar:** use calendars already connected on your phone, including Google calendars, through Android's Calendar Provider.
+- **Your AI provider:** bring a DeepSeek key or configure another OpenAI-compatible endpoint.
 
-## Сборка
+The interface is currently in Russian. This is an early personal project; see [current status and limitations](docs/STATUS.md).
 
-Нужны JDK 17 и Android SDK (compileSdk 36).
+## Install
+
+Download `VibeNotes.apk` from the [latest release](https://github.com/MAppleDm/VibeNotes/releases/latest) and open it on Android 8.0 or newer. The current distribution is a development APK, signed with the project's shared debug key.
+
+Choose a folder for notes and optionally configure your AI provider. Without an API key, inbox messages are saved to `Входящие.md`.
+
+The app can check GitHub for updates every 12 hours; Android asks before installing. Release versions use `vX.X.X`. See [CHANGELOG.md](CHANGELOG.md) and [RELEASING.md](RELEASING.md).
+
+## Data and privacy
+
+Notes are local Markdown files. There is no project account, backend, or telemetry. AI requests go to the provider you configure; API keys are encrypted with Android Keystore. Files excluded by `.aiignore` and all `*.env` files are hidden from the assistant. The chat shows which sources the assistant read.
+
+## Build
+
+Requires JDK 17 and Android SDK 36.
 
 ```bash
-./gradlew :core:test          # тесты логики (обычная JVM, Android не нужен)
-./gradlew :app:assembleDebug  # APK: app/build/outputs/apk/debug/
+./gradlew :core:test
+python3 tools/check_icu_regex.py core/src/main app/src/main
+./gradlew :app:assembleDebug
 ```
 
-GitHub Actions собирает debug-APK на каждый push и выкладывает его в релиз «Последняя сборка». Скачать на телефон можно по прямой ссылке:
+The APK is written to `app/build/outputs/apk/debug/`. CI tests and builds changes; only version tags publish releases.
 
-**https://github.com/MAppleDm/VibeNotes/releases/download/latest-build/VibeNotes.apk**
+## Project layout
 
-Debug-сборки подписаны общим ключом из репозитория, поэтому новые версии ставятся поверх старых. Дальше приложение обновляется само: раз в 12 часов оно проверяет `version.json` в том же релизе и предлагает скачать новую сборку («Настройки → О приложении»). Что нового — верхний раздел [CHANGELOG.md](CHANGELOG.md).
+| Directory | Purpose |
+| --- | --- |
+| `core/` | Kotlin/JVM storage, Markdown, Kanban, AI client, and agent logic |
+| `app/` | Jetpack Compose UI, Android storage, calendar, and Keystore integration |
+| `docs/` | [Architecture](docs/ARCHITECTURE.md) and [implementation status](docs/STATUS.md) |
 
-## Структура
+## Contributing
 
-```
-core/   чистый Kotlin/JVM: хранение .md, Kanban-формат, Markdown, клиент OpenAI-совместимого API,
-        инструменты агента, чат «Входящие». Покрыт unit-тестами.
-app/    Android: Jetpack Compose UI, SAF-хранилище, Calendar Provider, Keystore, навигация.
-```
+English and Russian issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Omit API keys and private notes from reports.
 
-## Лицензия
+## License
 
-GPL-3.0, см. [LICENSE](LICENSE). Шрифт Golos Text — SIL Open Font License 1.1, см. [licenses/GolosText-OFL.txt](licenses/GolosText-OFL.txt).
+[GPL-3.0](LICENSE). Golos Text is distributed under the [SIL Open Font License 1.1](licenses/GolosText-OFL.txt).
