@@ -33,7 +33,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
+import io.github.mappledm.vibenotes.core.agent.EventSnapshot
 import io.github.mappledm.vibenotes.core.agent.ResultTarget
+import io.github.mappledm.vibenotes.core.agent.TaskSnapshot
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.inbox.ProposalItem
 import io.github.mappledm.vibenotes.core.inbox.ProposalStatus
@@ -56,6 +58,7 @@ fun ProposalCard(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onOpen: () -> Unit,
+    onUndo: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenInCalendarApp: () -> Unit,
     selectedCalendar: CalendarInfo?,
@@ -106,9 +109,38 @@ fun ProposalCard(
                     Text("В «${VaultPaths.baseName(p.path)}»", style = MaterialTheme.typography.titleMedium, color = contentColor)
                     Text(p.text.trim(), style = MaterialTheme.typography.bodyMedium, maxLines = 6, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
+                is ActionProposal.UpdateEvent -> {
+                    Text(p.after.title, style = MaterialTheme.typography.titleMedium, color = contentColor)
+                    if (p.before.title != p.after.title) Detail("Название: ${p.before.title} → ${p.after.title}")
+                    Detail("Было: ${eventWhen(p.before)}")
+                    Detail("Станет: ${eventWhen(p.after)}")
+                    if (p.before.location != p.after.location) {
+                        Detail("Место: ${p.before.location ?: "—"} → ${p.after.location ?: "—"}")
+                    } else {
+                        p.after.location?.let { DetailWithIcon(Icons.Outlined.Place, it) }
+                    }
+                    if (p.before.reminderMinutes != p.after.reminderMinutes) {
+                        Detail("Напоминание: ${reminderLabel(p.before.reminderMinutes)} → ${reminderLabel(p.after.reminderMinutes)}")
+                    }
+                    if (p.before.description != p.after.description) Detail("Описание изменено")
+                }
+                is ActionProposal.DeleteEvent -> {
+                    Text(p.event.title, style = MaterialTheme.typography.titleMedium, color = contentColor)
+                    Detail(eventWhen(p.event))
+                    Detail("Событие будет удалено из календаря")
+                }
+                is ActionProposal.UpdateTask -> {
+                    Text(p.after.title, style = MaterialTheme.typography.titleMedium, color = contentColor)
+                    Detail("Доска «${VaultPaths.baseName(p.after.boardPath)}» → ${p.after.lane}")
+                    if (p.before.title != p.after.title) Detail("Название: ${p.before.title} → ${p.after.title}")
+                    if (p.before.dueDate != p.after.dueDate || p.before.dueTime != p.after.dueTime) {
+                        Detail("Срок: ${taskDue(p.before)} → ${taskDue(p.after)}")
+                    }
+                    if (p.before.done != p.after.done) Detail(if (p.after.done) "Отметить готовой" else "Вернуть в работу")
+                }
             }
             Spacer(Modifier.size(2.dp))
-            Footer(item, needsCalendarChoice, onConfirm, onDismiss, onEdit, onOpen, onRequestPermission, onOpenInCalendarApp)
+            Footer(item, needsCalendarChoice, onConfirm, onDismiss, onEdit, onOpen, onUndo, onRequestPermission, onOpenInCalendarApp)
         }
     }
 }
@@ -157,9 +189,11 @@ private fun Footer(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onOpen: () -> Unit,
+    onUndo: () -> Unit,
     onRequestPermission: () -> Unit,
     onOpenInCalendarApp: () -> Unit,
 ) {
+    val canEdit = item.proposal !is ActionProposal.DeleteEvent
     when (item.status) {
         ProposalStatus.PENDING -> Column(horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
             if (needsCalendarChoice) {
@@ -167,7 +201,7 @@ private fun Footer(
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onDismiss) { Text("Отмена") }
-                TextButton(onClick = onEdit) { Text("Изменить") }
+                if (canEdit) TextButton(onClick = onEdit) { Text("Изменить") }
                 Spacer(Modifier.width(4.dp))
                 Button(onClick = onConfirm, enabled = !needsCalendarChoice) { Text(confirmLabel(item.proposal)) }
             }
@@ -177,22 +211,37 @@ private fun Footer(
             Spacer(Modifier.width(8.dp))
             Text("Выполняю…", style = MaterialTheme.typography.bodyMedium)
         }
-        ProposalStatus.APPLIED -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.CheckCircle, null, Modifier.size(18.dp), tint = LocalExtraColors.current.success)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium)
-                if (item.autoApplied) {
-                    Text(
-                        "Без подтверждения — так настроено в «Настройки → Ассистент»",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+        ProposalStatus.APPLIED -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.CheckCircle, null, Modifier.size(18.dp), tint = LocalExtraColors.current.success)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.resultMessage ?: "Готово", style = MaterialTheme.typography.bodyMedium)
+                    if (item.autoApplied) {
+                        Text(
+                            "Без подтверждения — так настроено в «Настройки → Ассистент»",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    item.undoError?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                if (item.target != null) {
+                    TextButton(onClick = onOpen) { Text(if (item.target is ResultTarget.Event) "В календаре" else "Открыть") }
                 }
             }
-            if (item.target != null) {
-                TextButton(onClick = onOpen) { Text(if (item.target is ResultTarget.Event) "В календаре" else "Открыть") }
+            if (item.undo != null) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onUndo) { Text("Отменить") }
+                }
             }
+        }
+        ProposalStatus.UNDONE -> Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Text(item.resultMessage ?: "Отменено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         ProposalStatus.DISMISSED -> Text("Отменено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         ProposalStatus.FAILED -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -202,12 +251,17 @@ private fun Footer(
                 Text(item.resultMessage ?: "Ошибка", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                if (item.needsPermission && item.proposal is ActionProposal.CreateEvent) {
-                    TextButton(onClick = onOpenInCalendarApp) { Text("Через Календарь") }
+                val calendarProposal = item.proposal is ActionProposal.CreateEvent ||
+                    item.proposal is ActionProposal.UpdateEvent ||
+                    item.proposal is ActionProposal.DeleteEvent
+                if (item.needsPermission && calendarProposal) {
+                    if (item.proposal is ActionProposal.CreateEvent) {
+                        TextButton(onClick = onOpenInCalendarApp) { Text("Через Календарь") }
+                    }
                     Button(onClick = onRequestPermission) { Text("Разрешить доступ") }
                 } else {
                     TextButton(onClick = onDismiss) { Text("Отмена") }
-                    TextButton(onClick = onEdit) { Text("Изменить") }
+                    if (canEdit) TextButton(onClick = onEdit) { Text("Изменить") }
                     Button(onClick = onConfirm, enabled = !needsCalendarChoice) { Text("Повторить") }
                 }
             }
@@ -231,21 +285,41 @@ private fun DetailWithIcon(icon: ImageVector, text: String) {
 
 private fun iconFor(p: ActionProposal): ImageVector = when (p) {
     is ActionProposal.CreateEvent -> Icons.Outlined.Event
+    is ActionProposal.UpdateEvent -> Icons.Outlined.Event
+    is ActionProposal.DeleteEvent -> Icons.Outlined.Event
     is ActionProposal.AddTask -> Icons.Outlined.TaskAlt
+    is ActionProposal.UpdateTask -> Icons.Outlined.TaskAlt
     is ActionProposal.CreateNote -> Icons.AutoMirrored.Outlined.NoteAdd
     is ActionProposal.AppendToNote -> Icons.AutoMirrored.Outlined.Article
 }
 
 private fun kindLabel(p: ActionProposal): String = when (p) {
     is ActionProposal.CreateEvent -> "Событие в календаре"
+    is ActionProposal.UpdateEvent -> "Перенести событие"
+    is ActionProposal.DeleteEvent -> "Удалить событие"
     is ActionProposal.AddTask -> "Задача"
+    is ActionProposal.UpdateTask -> "Изменить задачу"
     is ActionProposal.CreateNote -> "Новая заметка"
     is ActionProposal.AppendToNote -> "Дописать в заметку"
 }
 
 private fun confirmLabel(p: ActionProposal): String = when (p) {
     is ActionProposal.CreateEvent -> "В календарь"
+    is ActionProposal.UpdateEvent -> "Перенести"
+    is ActionProposal.DeleteEvent -> "Удалить"
     is ActionProposal.AddTask -> "Добавить"
+    is ActionProposal.UpdateTask -> "Сохранить"
     is ActionProposal.CreateNote -> "Создать"
     is ActionProposal.AppendToNote -> "Дописать"
+}
+
+private fun eventWhen(s: EventSnapshot): String {
+    val date = runCatching { LocalDate.parse(s.date) }.getOrNull()?.let { Dates.short(it) } ?: s.date
+    return if (s.allDay) "$date · весь день" else "$date · ${s.startTime ?: ""}–${s.endTime ?: ""}"
+}
+
+private fun taskDue(s: TaskSnapshot): String {
+    val date = s.dueDate?.let { raw -> runCatching { LocalDate.parse(raw) }.getOrNull()?.let { Dates.short(it) } ?: raw }
+        ?: return "без срока"
+    return date + (s.dueTime?.let { ", $it" } ?: "")
 }

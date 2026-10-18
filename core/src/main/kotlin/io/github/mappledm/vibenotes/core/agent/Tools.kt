@@ -3,6 +3,7 @@ package io.github.mappledm.vibenotes.core.agent
 import io.github.mappledm.vibenotes.core.ai.ToolSpec
 import io.github.mappledm.vibenotes.core.calendar.CalendarException
 import io.github.mappledm.vibenotes.core.calendar.CalendarGateway
+import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.kanban.KanbanRepository
 import io.github.mappledm.vibenotes.core.notes.NotesRepository
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
@@ -27,9 +28,12 @@ class ToolRegistry(
         ListCalendarsTool(calendar),
         ListEventsTool(calendar),
         CreateEventTool(),
+        UpdateEventTool(calendar),
+        DeleteEventTool(calendar),
         CreateNoteTool(),
         AppendToNoteTool(notes),
         AddTaskTool(),
+        UpdateTaskTool(kanban, notes),
     )
 
     fun find(name: String): AgentTool? = tools.firstOrNull { it.spec.name == name }
@@ -114,7 +118,7 @@ class ListTasksTool(private val kanban: KanbanRepository, private val notes: Not
         if (tasks.isEmpty()) return ToolOutcome.Data("No tasks found.", ToolActivity(ActivityKind.TASKS, label))
         val body = tasks.joinToString("\n") { t ->
             val due = t.card.dueDate?.let { d -> " (due $d" + (t.card.dueTime?.let { " $it" } ?: "") + ")" } ?: ""
-            "- [${t.boardTitle} / ${t.laneTitle}] ${t.card.title}$due"
+            "- [${t.boardTitle} / ${t.laneTitle}] ${t.card.title}$due (board: ${t.boardPath})"
         }
         return ToolOutcome.Data(untrusted("tasks", body), ToolActivity(ActivityKind.TASKS, label))
     }
@@ -177,11 +181,11 @@ class ListEventsTool(private val calendar: CalendarGateway) : AgentTool {
             if (e.allDay) {
                 // All-day events are stored in UTC by the Calendar Provider.
                 val day = e.start.atZone(ZoneId.of("UTC")).toLocalDate()
-                "- $day all-day: ${e.title}"
+                "- id ${e.eventId}: $day all-day: ${e.title}" + (e.location?.let { " @ $it" } ?: "")
             } else {
                 val s = e.start.atZone(zone)
                 val en = e.end.atZone(zone)
-                "- ${s.toLocalDate()} ${s.format(timeFmt)}–${en.format(timeFmt)}: ${e.title}" + (e.location?.let { " @ $it" } ?: "")
+                "- id ${e.eventId}: ${s.toLocalDate()} ${s.format(timeFmt)}–${en.format(timeFmt)}: ${e.title}" + (e.location?.let { " @ $it" } ?: "")
             }
         }
         return ToolOutcome.Data(untrusted("calendar", body), ToolActivity(ActivityKind.CALENDAR, label))
@@ -247,6 +251,101 @@ class CreateEventTool : AgentTool {
         )
         ProposalValidator.validate(proposal)?.let { return ToolOutcome.Error("Invalid event: $it") }
         return ToolOutcome.Propose(proposal)
+    }
+}
+
+class UpdateEventTool(private val calendar: CalendarGateway) : AgentTool {
+    override val kind = ToolKind.PROPOSE
+    override val spec = ToolSpec(
+        name = "update_calendar_event",
+        description = "Proposes a change to an existing calendar event. Call list_calendar_events first to get event_id. " +
+            "Shows the old and new values; the event changes only after the user confirms.",
+        parameters = schema {
+            prop("event_id", "integer", "Event id from list_calendar_events", isRequired = true)
+            prop("title", "string", "New title, if it changes")
+            prop("date", "string", "New start date yyyy-MM-dd")
+            prop("start_time", "string", "New start time HH:mm")
+            prop("end_time", "string", "New end time HH:mm")
+            prop("end_date", "string", "New end date yyyy-MM-dd when it ends on another day")
+            prop("all_day", "boolean", "True to make the event all-day")
+            prop("location", "string", "New place")
+            prop("description", "string", "New description")
+            prop("reminder_minutes", "integer", "New reminder before start, in minutes")
+        },
+    )
+
+    override suspend fun run(args: JsonObject, context: AssistantContext): ToolOutcome {
+        val id = args.long("event_id") ?: return ToolOutcome.Error("Error: 'event_id' is required")
+        if (!calendar.hasPermission()) return ToolOutcome.Error("Calendar permission is not granted.")
+        val current = runCatching { calendar.event(id) }.getOrElse {
+            return ToolOutcome.Error("Calendar error: ${it.message}")
+        } ?: return ToolOutcome.Error("Event $id not found. Use list_calendar_events to get the id.")
+
+        val before = EventSnapshot.from(current, context.now.zone)
+        val allDay = args.bool("all_day") ?: before.allDay
+        val date = args.string("date") ?: before.date
+        val dateChanged = date != before.date
+        val title = args.string("title") ?: before.title
+        val after = if (allDay) {
+            EventSnapshot(
+                title = title,
+                date = date,
+                allDay = true,
+                endDate = args.string("end_date") ?: if (dateChanged) null else before.endDate,
+                location = args.string("location") ?: before.location,
+                description = args.string("description") ?: before.description,
+                calendarId = before.calendarId,
+                reminderMinutes = args.int("reminder_minutes") ?: before.reminderMinutes,
+            )
+        } else {
+            val start = args.string("start_time") ?: before.startTime ?: "09:00"
+            val startTime = ActionProposal.parseTime(start) ?: LocalTime.of(9, 0)
+            // Keep the duration when only the start moves; a new end is used as given.
+            val oldMinutes = Duration.between(before.startDateTime, before.endDateTime).toMinutes().takeIf { it > 0 } ?: 60
+            val end = args.string("end_time") ?: hhmm(startTime.plusMinutes(oldMinutes))
+            val endTime = ActionProposal.parseTime(end) ?: startTime.plusHours(1)
+            val endDate = args.string("end_date") ?: when {
+                !endTime.isAfter(startTime) -> LocalDate.parse(date).plusDays(1).toString()
+                dateChanged -> null
+                else -> before.endDate
+            }
+            EventSnapshot(
+                title = title,
+                date = date,
+                startTime = start,
+                endTime = end,
+                endDate = endDate,
+                location = args.string("location") ?: before.location,
+                description = args.string("description") ?: before.description,
+                calendarId = before.calendarId,
+                reminderMinutes = args.int("reminder_minutes") ?: before.reminderMinutes,
+            )
+        }
+        if (after == before) return ToolOutcome.Error("Nothing changed. Ask the user what to change.")
+        val proposal = ActionProposal.UpdateEvent(id, before, after)
+        ProposalValidator.validate(proposal)?.let { return ToolOutcome.Error("Invalid event change: $it") }
+        return ToolOutcome.Propose(proposal)
+    }
+}
+
+class DeleteEventTool(private val calendar: CalendarGateway) : AgentTool {
+    override val kind = ToolKind.PROPOSE
+    override val spec = ToolSpec(
+        name = "delete_calendar_event",
+        description = "Proposes deleting an existing calendar event. Call list_calendar_events first to get event_id. " +
+            "Deletes only after the user confirms.",
+        parameters = schema {
+            prop("event_id", "integer", "Event id from list_calendar_events", isRequired = true)
+        },
+    )
+
+    override suspend fun run(args: JsonObject, context: AssistantContext): ToolOutcome {
+        val id = args.long("event_id") ?: return ToolOutcome.Error("Error: 'event_id' is required")
+        if (!calendar.hasPermission()) return ToolOutcome.Error("Calendar permission is not granted.")
+        val current = runCatching { calendar.event(id) }.getOrElse {
+            return ToolOutcome.Error("Calendar error: ${it.message}")
+        } ?: return ToolOutcome.Error("Event $id not found. Use list_calendar_events to get the id.")
+        return ToolOutcome.Propose(ActionProposal.DeleteEvent(id, EventSnapshot.from(current, context.now.zone)))
     }
 }
 
@@ -336,6 +435,85 @@ class AddTaskTool : AgentTool {
             dueTime = if (due != null) dueTime?.let { hhmm(it) } else null,
         )
         ProposalValidator.validate(proposal)?.let { return ToolOutcome.Error("Invalid task: $it") }
+        return ToolOutcome.Propose(proposal)
+    }
+}
+
+class UpdateTaskTool(private val kanban: KanbanRepository, private val notes: NotesRepository) : AgentTool {
+    override val kind = ToolKind.PROPOSE
+    override val spec = ToolSpec(
+        name = "update_task",
+        description = "Proposes changing an existing Kanban card: a new title, due date/time, or done state. " +
+            "Call list_tasks first and use the exact board, column and card title. The card shows what will change; " +
+            "nothing is written until the user confirms.",
+        parameters = schema {
+            prop("board", "string", "Board title or path from list_tasks; omit for the default board")
+            prop("column", "string", "Column title from list_tasks; helps when titles repeat")
+            prop("title", "string", "Exact current card title", isRequired = true)
+            prop("new_title", "string", "New card title, if it changes")
+            prop("due_date", "string", "New due date yyyy-MM-dd")
+            prop("due_time", "string", "New due time HH:mm (requires a due date)")
+            prop("clear_due", "boolean", "True to remove the due date")
+            prop("done", "boolean", "True to mark the card done, false to reopen it")
+        },
+    )
+
+    override suspend fun run(args: JsonObject, context: AssistantContext): ToolOutcome {
+        val title = args.string("title") ?: return ToolOutcome.Error("Error: 'title' is required")
+        val boardArg = args.string("board")
+        val path = boardArg?.let { name ->
+            context.boards.firstOrNull { it.title.equals(name, true) || it.path.equals(name, true) }?.path
+                ?: VaultPaths.normalize(name).takeIf { VaultPaths.isNoteFile(it) }
+        } ?: context.defaultBoardPath
+        val laneArg = args.string("column")
+        val matches = kanban.allTasks()
+            .filterNot { notes.isHiddenFromAi(it.boardPath) }
+            .filter { it.boardPath.equals(path, true) }
+            .filter { laneArg == null || it.laneTitle.equals(laneArg, true) }
+            .filter { it.card.title.equals(title, true) || it.card.text.equals(title, true) }
+        val task = when {
+            matches.isEmpty() -> return ToolOutcome.Error(
+                "Task '$title' not found on board '${VaultPaths.baseName(path)}'. Use list_tasks to see the exact title and board.",
+            )
+            matches.size > 1 -> return ToolOutcome.Error("Several cards match '$title'. Pass the column to choose one.")
+            else -> matches.single()
+        }
+        val clearDue = args.bool("clear_due") ?: false
+        val dueArg = args.string("due_date")
+        if (args.string("due_time") != null && dueArg == null && !clearDue) {
+            return ToolOutcome.Error("Error: give due_date together with due_time.")
+        }
+        val dueDate: LocalDate? = when {
+            clearDue -> null
+            dueArg != null -> parseDate(dueArg) ?: return ToolOutcome.Error("Error: due_date must be yyyy-MM-dd")
+            else -> task.card.dueDate
+        }
+        val dueTime: LocalTime? = when {
+            dueDate == null || clearDue -> null
+            args.string("due_time") != null -> ActionProposal.parseTime(args.string("due_time"))
+                ?: return ToolOutcome.Error("Error: due_time must be HH:mm")
+            else -> task.card.dueTime
+        }
+        val afterTitle = args.string("new_title") ?: task.card.title
+        val before = TaskSnapshot(
+            boardPath = task.boardPath,
+            lane = task.laneTitle,
+            title = task.card.title,
+            dueDate = task.card.dueDate?.toString(),
+            dueTime = task.card.dueTime?.let { hhmm(it) },
+            done = task.card.checked || task.laneIsComplete,
+            text = task.card.text,
+        )
+        val after = before.copy(
+            title = afterTitle,
+            dueDate = dueDate?.toString(),
+            dueTime = dueTime?.let { hhmm(it) },
+            done = args.bool("done") ?: before.done,
+            text = KanbanCard.create(afterTitle, dueDate, if (dueDate != null) dueTime else null).text,
+        )
+        if (after == before) return ToolOutcome.Error("Nothing changed. Ask the user what to change.")
+        val proposal = ActionProposal.UpdateTask(before, after)
+        ProposalValidator.validate(proposal)?.let { return ToolOutcome.Error("Invalid task change: $it") }
         return ToolOutcome.Propose(proposal)
     }
 }

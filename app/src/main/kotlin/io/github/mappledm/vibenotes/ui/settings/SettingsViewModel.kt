@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.LocalDate
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     val settings: StateFlow<AppSettings> = container.settings.state
@@ -206,10 +207,17 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setAutoApply(kind: String, enabled: Boolean) = container.settings.setAutoApply(kind, enabled)
     fun setUseInstructions(value: Boolean) = container.settings.setUseInstructions(value)
     fun setAutoUpdateCheck(value: Boolean) = container.settings.setAutoUpdateCheck(value)
+    fun setTaskReminderEnabled(value: Boolean) = container.settings.setTaskReminderEnabled(value)
+    fun setTaskReminderDay(value: Int) = container.settings.setTaskReminderDay(value)
+    fun setTaskReminderTime(hour: Int, minute: Int) = container.settings.setTaskReminderTime(hour, minute)
+    fun showNotice(text: String) {
+        notice = text
+    }
 
     fun clearChat() {
         viewModelScope.launch {
             container.vault.value?.inbox?.clear()
+            container.settings.setChatClearedDay(LocalDate.now().toEpochDay())
             notice = "История чата очищена"
         }
     }

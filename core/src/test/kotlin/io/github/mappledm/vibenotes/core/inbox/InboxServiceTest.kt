@@ -92,6 +92,24 @@ class InboxServiceTest {
     }
 
     @Test
+    fun confirmedActionCanBeUndoneAndTheModelSeesThat() = runTest {
+        val calendar = FakeCalendar()
+        val llm = ScriptedLlm(ScriptedLlm.calls("create_calendar_event" to """{"title":"Врач","date":"2026-10-15","start_time":"09:00"}"""))
+        val (inbox, _) = service(llm, config, calendar)
+        inbox.send("врач в четверг")
+        val entry = inbox.entries.value.last()
+        val item = entry.proposals.single()
+        inbox.confirm(entry.id, item.id)
+        assertEquals(1, calendar.events.size)
+
+        val undone = inbox.undo(entry.id, item.id) as io.github.mappledm.vibenotes.core.agent.ActionResult.Success
+        assertEquals(ProposalStatus.UNDONE, inbox.entries.value.last().proposals.single().status)
+        assertTrue(calendar.events.isEmpty())
+        val action = inbox.buildHistory(inbox.entries.value).last().actions.single()
+        assertTrue(action.outcome.contains("undid"))
+    }
+
+    @Test
     fun failedActionIsMarkedFailedAndCanBeEdited() = runTest {
         val calendar = FakeCalendar(permission = false)
         val llm = ScriptedLlm(ScriptedLlm.calls("create_calendar_event" to """{"title":"Врач","date":"2026-10-15","start_time":"09:00"}"""))
@@ -202,6 +220,34 @@ class InboxServiceTest {
         val reloaded = ChatStore(file)
         reloaded.load()
         assertEquals(ProposalStatus.FAILED, reloaded.entries.value.single().proposals.single().status)
+    }
+
+    @Test
+    fun undoActionSurvivesARestart() = runTest {
+        val file = File(tmp.root, "undo.json")
+        val store = ChatStore(file)
+        store.load()
+        store.add(
+            ChatEntry(
+                "a", ChatRole.ASSISTANT, "", 1,
+                proposals = listOf(
+                    ProposalItem(
+                        "p",
+                        ActionProposal.CreateNote("Идеи", "текст"),
+                        ProposalStatus.APPLIED,
+                        "Заметка создана",
+                        io.github.mappledm.vibenotes.core.agent.ResultTarget.Note("Идеи.md"),
+                        undo = io.github.mappledm.vibenotes.core.agent.UndoAction.TrashNote("Идеи.md"),
+                    ),
+                ),
+            ),
+        )
+        val reloaded = ChatStore(file)
+        reloaded.load()
+        assertEquals(
+            io.github.mappledm.vibenotes.core.agent.UndoAction.TrashNote("Идеи.md"),
+            reloaded.entries.value.single().proposals.single().undo,
+        )
     }
 
     @Test

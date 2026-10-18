@@ -6,6 +6,10 @@
     <!-- Requested at runtime, only when you add an event or open the week view. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <!-- Optional weekly task reminder; requested when the user turns it on. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Re-schedules the weekly reminder after the phone restarts. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Updating the app from GitHub; Android still asks you to allow and confirm each install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
@@ -39,6 +43,19 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Weekly "look at your tasks" notification; scheduled by the app itself. -->
+        <receiver
+            android:name=".data.TaskReminderReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".data.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Hands a downloaded update to the system installer. -->
         <provider

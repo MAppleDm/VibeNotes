@@ -1,7 +1,11 @@
 package io.github.mappledm.vibenotes.ui.settings
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -63,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -83,10 +88,15 @@ import io.github.mappledm.vibenotes.data.ThemeMode
 import io.github.mappledm.vibenotes.data.UpdateState
 import io.github.mappledm.vibenotes.ui.components.ReminderOptions
 import io.github.mappledm.vibenotes.ui.components.Selector
+import io.github.mappledm.vibenotes.ui.components.TimePickerModal
 import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.components.reminderLabel
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
 import io.github.mappledm.vibenotes.ui.update.UpdatePanel
+import java.time.DayOfWeek
+import java.time.LocalTime
+import java.time.format.TextStyle
+import java.util.Locale
 
 /** Settings are grouped like a phone's settings app: a short list, details one tap away. */
 enum class SettingsSection(val id: String, val title: String, val icon: ImageVector) {
@@ -297,7 +307,62 @@ private fun TasksSection(vm: SettingsViewModel, settings: AppSettings) {
     var inbox by rememberSaveable { mutableStateOf(settings.inboxNote) }
     OutlinedTextField(inbox, { inbox = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
     TextButton(onClick = { vm.setInboxNote(inbox) }, enabled = inbox.isNotBlank() && inbox != settings.inboxNote) { Text("Сохранить") }
+
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    TaskReminderSettings(vm, settings)
 }
+
+@Composable
+private fun TaskReminderSettings(vm: SettingsViewModel, settings: AppSettings) {
+    val context = LocalContext.current
+    var pickTime by remember { mutableStateOf(false) }
+    val time = LocalTime.of(settings.taskReminderHour, settings.taskReminderMinute)
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        vm.setTaskReminderEnabled(granted)
+        if (!granted) vm.showNotice("Без разрешения на уведомления напоминание не появится")
+    }
+
+    fun setEnabled(enabled: Boolean) {
+        if (!enabled) {
+            vm.setTaskReminderEnabled(false)
+            return
+        }
+        val needsPermission = Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (needsPermission) permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        else vm.setTaskReminderEnabled(true)
+    }
+
+    Group("Напоминание о задачах")
+    SwitchRow(
+        "Раз в неделю",
+        "Одно уведомление со списком задач и просроченным",
+        settings.taskReminderEnabled,
+        { setEnabled(it) },
+    )
+    if (settings.taskReminderEnabled) {
+        Label("День недели")
+        Selector(
+            options = DayOfWeek.entries.map { it.value to dayName(it) },
+            selected = settings.taskReminderDay,
+            onSelect = vm::setTaskReminderDay,
+        )
+        Label("Время")
+        OutlinedButton(onClick = { pickTime = true }) { Text("%02d:%02d".format(time.hour, time.minute)) }
+        Hint("В режиме экономии уведомление может прийти чуть позже. Задачи и заметки от этого не меняются.")
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            TextButton(onClick = { permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) { Text("Разрешить уведомления") }
+        }
+    }
+    if (pickTime) {
+        TimePickerModal(time, { vm.setTaskReminderTime(it.hour, it.minute) }, { pickTime = false })
+    }
+}
+
+private fun dayName(day: DayOfWeek): String =
+    day.getDisplayName(TextStyle.FULL, Locale.forLanguageTag("ru")).replaceFirstChar { it.uppercase() }
 
 @Composable
 private fun StorageSection(vm: SettingsViewModel, settings: AppSettings, onOpenNote: (String) -> Unit) {
@@ -428,7 +493,7 @@ private fun AssistantSection(vm: SettingsViewModel, settings: AppSettings, onOpe
     Hint("Обычно ассистент показывает карточку и ничего не меняет, пока вы не нажмёте кнопку. Можно разрешить ему сразу:")
     Column {
         ProposalKind.entries.forEach { kind ->
-            SwitchRow("Добавлять ${kind.label}", null, kind.name in settings.autoApply) { vm.setAutoApply(kind.name, it) }
+            SwitchRow("Без подтверждения: ${kind.label}", null, kind.name in settings.autoApply) { vm.setAutoApply(kind.name, it) }
         }
     }
     Hint("Событие без выбранного календаря всё равно спросит, куда его поставить. Такие действия помечаются в чате.")
@@ -444,6 +509,7 @@ private fun AssistantSection(vm: SettingsViewModel, settings: AppSettings, onOpe
     Group("Память")
     Text("Помнит последних сообщений: ${settings.historySize}", style = MaterialTheme.typography.bodyLarge)
     Hint("Чтобы понимать «перенеси на 10» или «и ещё молоко». Больше — лучше помнит, но запрос дольше и дороже.")
+    Hint("Чат сам очищается при первом открытии нового дня: это черновик на сегодня. Заметки, задачи и события не трогаются.")
     Slider(
         value = settings.historySize.toFloat(),
         onValueChange = { vm.setHistorySize(it.toInt()) },

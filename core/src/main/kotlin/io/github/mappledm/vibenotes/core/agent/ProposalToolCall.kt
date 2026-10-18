@@ -15,12 +15,35 @@ fun ActionProposal.toolCall(): Pair<String, String> = when (this) {
         location?.let { put("location", it) }
         calendarId?.let { put("calendar_id", it) }
     }.toString()
+    is ActionProposal.UpdateEvent -> "update_calendar_event" to buildJsonObject {
+        put("event_id", eventId)
+        put("title", after.title)
+        put("date", after.date)
+        after.startTime?.let { put("start_time", it) }
+        after.endTime?.let { put("end_time", it) }
+        after.endDate?.let { put("end_date", it) }
+        put("all_day", after.allDay)
+    }.toString()
+    is ActionProposal.DeleteEvent -> "delete_calendar_event" to buildJsonObject {
+        put("event_id", eventId)
+    }.toString()
     is ActionProposal.AddTask -> "add_task" to buildJsonObject {
         put("title", title)
         put("board", VaultPaths.noteTitle(boardPath))
         put("column", lane)
         dueDate?.let { put("due_date", it) }
         dueTime?.let { put("due_time", it) }
+    }.toString()
+    is ActionProposal.UpdateTask -> "update_task" to buildJsonObject {
+        put("board", VaultPaths.noteTitle(before.boardPath))
+        put("column", before.lane)
+        put("title", before.title)
+        if (after.title != before.title) put("new_title", after.title)
+        if (after.dueDate != before.dueDate) {
+            if (after.dueDate == null) put("clear_due", true) else put("due_date", after.dueDate)
+        }
+        if (after.dueTime != before.dueTime) after.dueTime?.let { put("due_time", it) }
+        if (after.done != before.done) put("done", after.done)
     }.toString()
     is ActionProposal.CreateNote -> "create_note" to buildJsonObject {
         put("title", title)

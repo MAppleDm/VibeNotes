@@ -3,6 +3,7 @@ package io.github.mappledm.vibenotes.core.inbox
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
 import io.github.mappledm.vibenotes.core.agent.ResultTarget
 import io.github.mappledm.vibenotes.core.agent.ToolActivity
+import io.github.mappledm.vibenotes.core.agent.UndoAction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,7 +21,7 @@ import java.io.File
 enum class ChatRole { USER, ASSISTANT, NOTICE }
 
 @Serializable
-enum class ProposalStatus { PENDING, APPLYING, APPLIED, DISMISSED, FAILED }
+enum class ProposalStatus { PENDING, APPLYING, APPLIED, UNDONE, DISMISSED, FAILED }
 
 @Serializable
 data class ProposalItem(
@@ -32,6 +33,10 @@ data class ProposalItem(
     val needsPermission: Boolean = false,
     /** Applied without a card because the user enabled auto-apply for this kind. */
     val autoApplied: Boolean = false,
+    /** Inverse operation for "Отменить"; null for old cards or when undo is not possible. */
+    val undo: UndoAction? = null,
+    /** Why "Отменить" failed; the original action is still applied. */
+    val undoError: String? = null,
 )
 
 @Serializable

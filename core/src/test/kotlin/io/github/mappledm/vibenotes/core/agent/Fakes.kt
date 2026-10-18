@@ -48,6 +48,8 @@ class FakeCalendar(
 ) : CalendarGateway {
     val inserted = mutableListOf<NewCalendarEvent>()
     val events = mutableListOf<CalendarEvent>()
+    val updated = mutableListOf<Pair<Long, NewCalendarEvent>>()
+    val deleted = mutableListOf<Long>()
 
     override fun hasPermission() = permission
 
@@ -59,13 +61,44 @@ class FakeCalendar(
     override suspend fun events(from: Instant, to: Instant): List<CalendarEvent> =
         events.filter { it.start < to && it.end > from }
 
+    override suspend fun event(eventId: Long): CalendarEvent? = events.firstOrNull { it.eventId == eventId }
+
     override suspend fun insert(event: NewCalendarEvent): Long {
         if (!permission) throw CalendarException(CalendarException.Kind.PERMISSION, "Нет доступа к календарю")
         if (failInsert) throw CalendarException(CalendarException.Kind.FAILED, "Календарь отклонил событие")
         inserted += event
-        return 100L + inserted.size
+        val id = 100L + inserted.size
+        events += event.toCalendarEvent(id)
+        return id
+    }
+
+    override suspend fun update(eventId: Long, event: NewCalendarEvent) {
+        if (!permission) throw CalendarException(CalendarException.Kind.PERMISSION, "Нет доступа к календарю")
+        val index = events.indexOfFirst { it.eventId == eventId }
+        if (index < 0) throw CalendarException(CalendarException.Kind.FAILED, "Событие не найдено")
+        updated += eventId to event
+        events[index] = event.toCalendarEvent(eventId)
+    }
+
+    override suspend fun delete(eventId: Long) {
+        if (!permission) throw CalendarException(CalendarException.Kind.PERMISSION, "Нет доступа к календарю")
+        if (!events.removeAll { it.eventId == eventId }) throw CalendarException(CalendarException.Kind.FAILED, "Событие не найдено")
+        deleted += eventId
     }
 }
+
+private fun NewCalendarEvent.toCalendarEvent(eventId: Long): CalendarEvent = CalendarEvent(
+    eventId = eventId,
+    calendarId = calendarId,
+    title = title,
+    start = if (allDay) startDate.atStartOfDay(java.time.ZoneOffset.UTC).toInstant() else start.atZone(zone).toInstant(),
+    end = if (allDay) endDateExclusive.atStartOfDay(java.time.ZoneOffset.UTC).toInstant() else end.atZone(zone).toInstant(),
+    allDay = allDay,
+    location = location,
+    color = null,
+    description = description,
+    reminderMinutes = reminderMinutes,
+)
 
 val TEST_ZONE: ZoneId = ZoneId.of("Europe/Moscow")
 

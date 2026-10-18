@@ -35,7 +35,7 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
         ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
     }
 
-    private inline fun <T> guarded(block: () -> T): T {
+    private suspend inline fun <T> guarded(block: suspend () -> T): T {
         if (!hasPermission()) throw CalendarException(CalendarException.Kind.PERMISSION, "Нет доступа к календарю")
         return try {
             block()
@@ -123,27 +123,106 @@ class AndroidCalendarGateway(private val context: Context) : CalendarGateway {
         }
     }
 
+    override suspend fun event(eventId: Long): CalendarEvent? = withContext(Dispatchers.IO) {
+        guarded {
+            val projection = arrayOf(
+                Events._ID,
+                Events.CALENDAR_ID,
+                Events.TITLE,
+                Events.DTSTART,
+                Events.DTEND,
+                Events.ALL_DAY,
+                Events.EVENT_LOCATION,
+                Events.DESCRIPTION,
+            )
+            var event: CalendarEvent? = null
+            resolver.query(eventUri(eventId), projection, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    event = CalendarEvent(
+                        eventId = c.getLong(0),
+                        calendarId = c.getLong(1),
+                        title = c.getString(2).orEmpty().ifEmpty { "(без названия)" },
+                        start = Instant.ofEpochMilli(c.getLong(3)),
+                        end = Instant.ofEpochMilli(c.getLong(4)),
+                        allDay = c.getInt(5) == 1,
+                        location = c.getString(6)?.takeIf { it.isNotBlank() },
+                        color = null,
+                        description = c.getString(7)?.takeIf { it.isNotBlank() },
+                    )
+                }
+            }
+            event?.copy(reminderMinutes = firstReminder(eventId))
+        }
+    }
+
+    private fun firstReminder(eventId: Long): Int? =
+        resolver.query(
+            Reminders.CONTENT_URI,
+            arrayOf(Reminders.MINUTES),
+            "${Reminders.EVENT_ID} = ?",
+            arrayOf(eventId.toString()),
+            "${Reminders.MINUTES} ASC",
+        )?.use { c -> if (c.moveToFirst()) c.getInt(0) else null }
+
+    override suspend fun update(eventId: Long, event: NewCalendarEvent) = withContext(Dispatchers.IO) {
+        guarded {
+            val values = eventValues(event)
+            val changed = resolver.update(eventUri(eventId), values, null, null)
+            if (changed <= 0) throw CalendarException(CalendarException.Kind.FAILED, "Событие не найдено")
+
+            resolver.delete(Reminders.CONTENT_URI, "${Reminders.EVENT_ID} = ?", arrayOf(eventId.toString()))
+            event.reminderMinutes?.let { minutes ->
+                resolver.insert(
+                    Reminders.CONTENT_URI,
+                    ContentValues().apply {
+                        put(Reminders.EVENT_ID, eventId)
+                        put(Reminders.MINUTES, minutes)
+                        put(Reminders.METHOD, Reminders.METHOD_ALERT)
+                    },
+                )
+            }
+
+            val saved = event(eventId)
+            if (saved == null || saved.title != event.title) {
+                throw CalendarException(CalendarException.Kind.FAILED, "Событие не сохранилось")
+            }
+            requestSync(event.calendarId)
+        }
+        Unit
+    }
+
+    override suspend fun delete(eventId: Long) = withContext(Dispatchers.IO) {
+        guarded {
+            val removed = resolver.delete(eventUri(eventId), null, null)
+            if (removed <= 0) throw CalendarException(CalendarException.Kind.FAILED, "Событие уже удалено")
+            if (event(eventId) != null) throw CalendarException(CalendarException.Kind.FAILED, "Событие не удалилось")
+        }
+        Unit
+    }
+
+    private fun eventValues(event: NewCalendarEvent): ContentValues = ContentValues().apply {
+        put(Events.CALENDAR_ID, event.calendarId)
+        put(Events.TITLE, event.title)
+        event.description?.let { put(Events.DESCRIPTION, it) } ?: putNull(Events.DESCRIPTION)
+        event.location?.let { put(Events.EVENT_LOCATION, it) } ?: putNull(Events.EVENT_LOCATION)
+        if (event.allDay) {
+            // The provider requires all-day events at UTC midnight with a UTC time zone.
+            put(Events.ALL_DAY, 1)
+            put(Events.EVENT_TIMEZONE, "UTC")
+            put(Events.DTSTART, event.startDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+            put(Events.DTEND, event.endDateExclusive.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+        } else {
+            put(Events.ALL_DAY, 0)
+            put(Events.EVENT_TIMEZONE, event.zone.id)
+            put(Events.DTSTART, event.start.atZone(event.zone).toInstant().toEpochMilli())
+            put(Events.DTEND, event.end.atZone(event.zone).toInstant().toEpochMilli())
+        }
+        put(Events.HAS_ALARM, if (event.reminderMinutes != null) 1 else 0)
+    }
+
     override suspend fun insert(event: NewCalendarEvent): Long = withContext(Dispatchers.IO) {
         guarded {
-            val values = ContentValues().apply {
-                put(Events.CALENDAR_ID, event.calendarId)
-                put(Events.TITLE, event.title)
-                event.description?.let { put(Events.DESCRIPTION, it) }
-                event.location?.let { put(Events.EVENT_LOCATION, it) }
-                if (event.allDay) {
-                    // The provider requires all-day events at UTC midnight with a UTC time zone.
-                    put(Events.ALL_DAY, 1)
-                    put(Events.EVENT_TIMEZONE, "UTC")
-                    put(Events.DTSTART, event.startDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
-                    put(Events.DTEND, event.endDateExclusive.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
-                } else {
-                    put(Events.EVENT_TIMEZONE, event.zone.id)
-                    put(Events.DTSTART, event.start.atZone(event.zone).toInstant().toEpochMilli())
-                    put(Events.DTEND, event.end.atZone(event.zone).toInstant().toEpochMilli())
-                }
-                put(Events.HAS_ALARM, if (event.reminderMinutes != null) 1 else 0)
-            }
-            val uri = resolver.insert(Events.CONTENT_URI, values)
+            val uri = resolver.insert(Events.CONTENT_URI, eventValues(event))
                 ?: throw CalendarException(CalendarException.Kind.FAILED, "Календарь не принял событие")
             val id = ContentUris.parseId(uri)
 

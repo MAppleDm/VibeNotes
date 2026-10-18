@@ -143,7 +143,7 @@ fun InboxScreen(
     }
 
     fun confirm(entryId: String, item: ProposalItem) {
-        if (item.proposal is ActionProposal.CreateEvent && !vm.hasCalendarPermission()) {
+        if (item.proposal.needsCalendarPermission() && !vm.hasCalendarPermission()) {
             pendingConfirm = "$entryId|${item.id}"
             permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
         } else {
@@ -179,8 +179,12 @@ fun InboxScreen(
             is ResultTarget.Note -> onOpenNote(target.path)
             is ResultTarget.Board -> onOpenBoard(target.path)
             is ResultTarget.Event -> runCatching {
-                val event = item.proposal as? ActionProposal.CreateEvent
-                val begin = event?.startDateTime?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
+                val start = when (val p = item.proposal) {
+                    is ActionProposal.CreateEvent -> p.startDateTime
+                    is ActionProposal.UpdateEvent -> p.after.startDateTime
+                    else -> null
+                }
+                val begin = start?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
                     ?: System.currentTimeMillis()
                 context.startActivity(AndroidCalendarGateway.viewTimeIntent(begin))
             }
@@ -188,7 +192,7 @@ fun InboxScreen(
         }
     }
 
-    OnResume { vm.loadCalendars() }
+    OnResume { vm.onResume() }
 
     Scaffold(
         topBar = {
@@ -234,6 +238,7 @@ fun InboxScreen(
                             onDismiss = { vm.dismiss(entry.id, it.id) },
                             onEdit = { editing = entry.id to it },
                             onOpen = { openTarget(it) },
+                            onUndo = { vm.undo(entry.id, it.id) },
                             onRequestPermission = { requestPermission(entry.id, it) },
                             onOpenInCalendarApp = { openInCalendarApp(context, it.proposal) },
                             onRetry = { vm.retry(entry.id) },
@@ -325,6 +330,7 @@ private fun EntryItem(
     onDismiss: (ProposalItem) -> Unit,
     onEdit: (ProposalItem) -> Unit,
     onOpen: (ProposalItem) -> Unit,
+    onUndo: (ProposalItem) -> Unit,
     onRequestPermission: (ProposalItem) -> Unit,
     onOpenInCalendarApp: (ProposalItem) -> Unit,
     onRetry: () -> Unit,
@@ -373,6 +379,7 @@ private fun EntryItem(
                     onDismiss = { onDismiss(item) },
                     onEdit = { onEdit(item) },
                     onOpen = { onOpen(item) },
+                    onUndo = { onUndo(item) },
                     onRequestPermission = { onRequestPermission(item) },
                     onOpenInCalendarApp = { onOpenInCalendarApp(item) },
                     selectedCalendar = selectedCalendar(item),
@@ -498,6 +505,9 @@ private fun Composer(vm: InboxViewModel, generating: Boolean, aiConfigured: Bool
         }
     }
 }
+
+private fun ActionProposal.needsCalendarPermission(): Boolean =
+    this is ActionProposal.CreateEvent || this is ActionProposal.UpdateEvent || this is ActionProposal.DeleteEvent
 
 /** Fallback without calendar permission: open the system "new event" screen prefilled. */
 private fun openInCalendarApp(context: android.content.Context, proposal: ActionProposal) {

@@ -51,6 +51,7 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
     private var job: Job? = null
 
     init {
+        viewModelScope.launch { container.clearChatIfNewDay() }
         loadCalendars()
         viewModelScope.launch {
             container.pendingShare.collect { shared ->
@@ -85,6 +86,7 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
         job = viewModelScope.launch(Dispatchers.Default) {
             _generating.value = true
             try {
+                runCatching { container.clearChatIfNewDay() }
                 inbox.send(text)
             } finally {
                 _generating.value = false
@@ -134,10 +136,20 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { inbox.dismiss(entryId, proposalId) }
     }
 
+    fun undo(entryId: String, proposalId: String) {
+        viewModelScope.launch(Dispatchers.Default) { inbox.undo(entryId, proposalId) }
+    }
+
     fun edit(entryId: String, proposalId: String, proposal: ActionProposal, onResult: (String?) -> Unit) {
         viewModelScope.launch {
             onResult(inbox.edit(entryId, proposalId, proposal))
         }
+    }
+
+    /** Called when the screen comes back: a new calendar day starts a fresh chat. */
+    fun onResume() {
+        if (!_generating.value) viewModelScope.launch { container.clearChatIfNewDay() }
+        loadCalendars()
     }
 
     fun loadCalendars() {
@@ -186,6 +198,10 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
             }
             val calendars = fetchCalendars()
             val item = inbox.entries.value.firstOrNull { it.id == entryId }?.proposals?.firstOrNull { it.id == proposalId } ?: return@launch
+            if (item.proposal is ActionProposal.UpdateEvent || item.proposal is ActionProposal.DeleteEvent) {
+                inbox.confirm(entryId, proposalId)
+                return@launch
+            }
             val event = item.proposal as? ActionProposal.CreateEvent ?: return@launch
             val saved = savedCalendar(calendars)
             when {

@@ -154,8 +154,43 @@ class InboxService(
         val result = withContext(NonCancellable) { executor.execute(item.proposal) }
         store.updateProposal(entryId, proposalId) {
             when (result) {
-                is ActionResult.Success -> it.copy(status = ProposalStatus.APPLIED, resultMessage = result.message, target = result.target, needsPermission = false)
-                is ActionResult.Failure -> it.copy(status = ProposalStatus.FAILED, resultMessage = result.message, needsPermission = result.permissionRequired)
+                is ActionResult.Success -> it.copy(
+                    status = ProposalStatus.APPLIED,
+                    resultMessage = result.message,
+                    target = result.target,
+                    needsPermission = false,
+                    undo = result.undo,
+                    undoError = null,
+                )
+                is ActionResult.Failure -> it.copy(
+                    status = ProposalStatus.FAILED,
+                    resultMessage = result.message,
+                    needsPermission = result.permissionRequired,
+                    undo = null,
+                    undoError = null,
+                )
+            }
+        }
+        return result
+    }
+
+    /** Takes back an applied action. The card stays in the chat as "Отменено". */
+    suspend fun undo(entryId: String, proposalId: String): ActionResult? {
+        val item = store.find(entryId)?.proposals?.firstOrNull { it.id == proposalId } ?: return null
+        if (item.status != ProposalStatus.APPLIED) return null
+        val action = item.undo ?: return null
+        store.updateProposal(entryId, proposalId) { it.copy(status = ProposalStatus.APPLYING, undoError = null) }
+        val result = withContext(NonCancellable) { executor.undo(action) }
+        store.updateProposal(entryId, proposalId) {
+            when (result) {
+                is ActionResult.Success -> it.copy(
+                    status = ProposalStatus.UNDONE,
+                    resultMessage = "Отменено: ${result.message}",
+                    target = null,
+                    undo = null,
+                    undoError = null,
+                )
+                is ActionResult.Failure -> it.copy(status = ProposalStatus.APPLIED, undoError = result.message)
             }
         }
         return result
@@ -207,10 +242,11 @@ class InboxService(
 
     private fun outcomeText(item: ProposalItem): String = when (item.status) {
         ProposalStatus.PENDING, ProposalStatus.APPLYING ->
-            "Shown to the user as a card; NOT confirmed yet, nothing was created."
+            "Shown to the user as a card; NOT confirmed yet, nothing was created or changed."
         ProposalStatus.APPLIED -> "The user confirmed and the app completed it: ${item.resultMessage ?: "done"}."
-        ProposalStatus.DISMISSED -> "The user dismissed the card. Nothing was created."
-        ProposalStatus.FAILED -> "Failed: ${item.resultMessage ?: "error"}. Nothing was created."
+        ProposalStatus.UNDONE -> "The user confirmed it, then undid it. Nothing created or changed by it remains."
+        ProposalStatus.DISMISSED -> "The user dismissed the card. Nothing was created or changed."
+        ProposalStatus.FAILED -> "Failed: ${item.resultMessage ?: "error"}. Nothing was created or changed."
     }
 
 }
@@ -230,5 +266,9 @@ object ProposalText {
         is ActionProposal.AppendToNote -> "дописать в «${VaultPaths.baseName(p.path)}»"
         is ActionProposal.AddTask -> "задача «${p.title}» на доске «${VaultPaths.baseName(p.boardPath)}»" +
             (p.dueDate?.let { " до $it" } ?: "")
+        is ActionProposal.UpdateEvent -> "перенос события «${p.after.title}» на ${p.after.date}" +
+            (p.after.startTime?.let { " $it" } ?: "")
+        is ActionProposal.DeleteEvent -> "удаление события «${p.event.title}»"
+        is ActionProposal.UpdateTask -> "изменение задачи «${p.before.title}»"
     }
 }

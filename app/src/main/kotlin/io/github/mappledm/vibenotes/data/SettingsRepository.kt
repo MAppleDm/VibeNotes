@@ -67,6 +67,14 @@ data class AppSettings(
     val lastUpdateCheck: Long,
     /** versionCode the user postponed with "Позже"; the banner stays hidden for it. */
     val dismissedUpdate: Long,
+    /** Epoch day when the chat was last cleared automatically (keeps chat to one day). */
+    val chatClearedDay: Long? = null,
+    // --- weekly task reminder ---
+    val taskReminderEnabled: Boolean = false,
+    /** ISO day of week, 1 = Monday. */
+    val taskReminderDay: Int = 1,
+    val taskReminderHour: Int = 10,
+    val taskReminderMinute: Int = 0,
 )
 
 /** Small key-value settings; SharedPreferences is enough and has no extra dependencies. */
@@ -99,6 +107,11 @@ class SettingsRepository(context: Context) {
         autoUpdateCheck = prefs.getBoolean(KEY_AUTO_UPDATE, true),
         lastUpdateCheck = prefs.getLong(KEY_LAST_UPDATE_CHECK, 0L),
         dismissedUpdate = prefs.getLong(KEY_DISMISSED_UPDATE, 0L),
+        chatClearedDay = prefs.getLong(KEY_CHAT_CLEARED, Long.MIN_VALUE).takeIf { it != Long.MIN_VALUE },
+        taskReminderEnabled = prefs.getBoolean(KEY_TASK_REMINDER, false),
+        taskReminderDay = prefs.getInt(KEY_TASK_REMINDER_DAY, 1).coerceIn(1, 7),
+        taskReminderHour = prefs.getInt(KEY_TASK_REMINDER_HOUR, 10).coerceIn(0, 23),
+        taskReminderMinute = prefs.getInt(KEY_TASK_REMINDER_MINUTE, 0).coerceIn(0, 59),
     )
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -147,6 +160,13 @@ class SettingsRepository(context: Context) {
     fun setAutoUpdateCheck(value: Boolean) = edit { putBoolean(KEY_AUTO_UPDATE, value) }
     fun setLastUpdateCheck(millis: Long) = edit { putLong(KEY_LAST_UPDATE_CHECK, millis) }
     fun setDismissedUpdate(versionCode: Long) = edit { putLong(KEY_DISMISSED_UPDATE, versionCode) }
+    fun setChatClearedDay(epochDay: Long) = edit { putLong(KEY_CHAT_CLEARED, epochDay) }
+    fun setTaskReminderEnabled(value: Boolean) = edit { putBoolean(KEY_TASK_REMINDER, value) }
+    fun setTaskReminderDay(value: Int) = edit { putInt(KEY_TASK_REMINDER_DAY, value.coerceIn(1, 7)) }
+    fun setTaskReminderTime(hour: Int, minute: Int) = edit {
+        putInt(KEY_TASK_REMINDER_HOUR, hour.coerceIn(0, 23))
+        putInt(KEY_TASK_REMINDER_MINUTE, minute.coerceIn(0, 59))
+    }
 
     fun setPinned(path: String, pinned: Boolean) = edit {
         val updated = current.pinned.toMutableSet().apply { if (pinned) add(path) else remove(path) }
@@ -166,6 +186,11 @@ class SettingsRepository(context: Context) {
         private const val KEY_AUTO_APPLY = "ai_auto_apply"
         private const val KEY_USE_INSTRUCTIONS = "ai_use_instructions"
         private const val KEY_INSTRUCTIONS_FILE = "ai_instructions_file"
+        private const val KEY_CHAT_CLEARED = "chat_cleared_day"
+        private const val KEY_TASK_REMINDER = "task_reminder"
+        private const val KEY_TASK_REMINDER_DAY = "task_reminder_day"
+        private const val KEY_TASK_REMINDER_HOUR = "task_reminder_hour"
+        private const val KEY_TASK_REMINDER_MINUTE = "task_reminder_minute"
         private const val KEY_AUTO_UPDATE = "update_auto_check"
         private const val KEY_LAST_UPDATE_CHECK = "update_last_check"
         private const val KEY_DISMISSED_UPDATE = "update_dismissed"

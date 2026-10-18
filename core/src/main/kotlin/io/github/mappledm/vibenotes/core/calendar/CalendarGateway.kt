@@ -45,6 +45,8 @@ data class CalendarEvent(
     val allDay: Boolean,
     val location: String?,
     val color: Int?,
+    val description: String? = null,
+    val reminderMinutes: Int? = null,
 )
 
 /** Event the user confirmed. All-day events use [startDate]/[endDateExclusive]. */
@@ -72,8 +74,17 @@ interface CalendarGateway {
 
     suspend fun events(from: Instant, to: Instant): List<CalendarEvent>
 
+    /** One event with its description and reminder, for editing and deleting. */
+    suspend fun event(eventId: Long): CalendarEvent?
+
     /** Inserts the event and verifies it can be read back. Returns the event id. */
     suspend fun insert(event: NewCalendarEvent): Long
+
+    /** Rewrites the event fields and verifies the event still exists. */
+    suspend fun update(eventId: Long, event: NewCalendarEvent)
+
+    /** Deletes the event and verifies it is gone. */
+    suspend fun delete(eventId: Long)
 }
 
 class CalendarException(val kind: Kind, message: String, cause: Throwable? = null) : Exception(message, cause) {

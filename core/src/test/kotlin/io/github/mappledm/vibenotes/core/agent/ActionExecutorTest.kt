@@ -1,17 +1,22 @@
 package io.github.mappledm.vibenotes.core.agent
 
+import io.github.mappledm.vibenotes.core.calendar.CalendarEvent
+import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.kanban.KanbanRepository
 import io.github.mappledm.vibenotes.core.notes.NotesRepository
 import io.github.mappledm.vibenotes.core.storage.LocalFileStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 
 class ActionExecutorTest {
@@ -19,13 +24,14 @@ class ActionExecutorTest {
     val tmp = TemporaryFolder()
 
     private lateinit var root: File
+    private lateinit var notes: NotesRepository
     private lateinit var calendar: FakeCalendar
     private lateinit var executor: DefaultActionExecutor
 
     @Before
     fun setUp() {
         root = tmp.newFolder("vault")
-        val notes = NotesRepository(LocalFileStore(root, Dispatchers.Unconfined))
+        notes = NotesRepository(LocalFileStore(root, Dispatchers.Unconfined))
         calendar = FakeCalendar()
         executor = DefaultActionExecutor(notes, KanbanRepository(notes), calendar) { TEST_ZONE }
     }
@@ -84,5 +90,79 @@ class ActionExecutorTest {
 
         executor.execute(ActionProposal.AppendToNote("Входящие.md", "- мысль"))
         assertEquals("- мысль\n", File(root, "Входящие.md").readText())
+    }
+
+    @Test
+    fun appliedActionsCarryAnUndoThatRestoresTheVault() = runTest {
+        val note = executor.execute(ActionProposal.CreateNote("Идеи", "- приложение")) as ActionResult.Success
+        assertEquals(UndoAction.TrashNote("Идеи.md"), note.undo)
+        executor.undo(note.undo!!)
+        assertFalse(File(root, "Идеи.md").exists())
+
+        executor.execute(ActionProposal.AppendToNote("Входящие.md", "- мысль"))
+        val appended = executor.execute(ActionProposal.AppendToNote("Входящие.md", "- ещё")) as ActionResult.Success
+        executor.undo(appended.undo!!)
+        assertEquals("- мысль\n", File(root, "Входящие.md").readText())
+
+        val task = executor.execute(ActionProposal.AddTask("Задачи.md", "Сделать", "Купить молоко")) as ActionResult.Success
+        assertTrue(File(root, "Задачи.md").readText().contains("Купить молоко"))
+        executor.undo(task.undo!!)
+        assertFalse(File(root, "Задачи.md").readText().contains("Купить молоко"))
+    }
+
+    @Test
+    fun updateAndDeleteEventCanBeUndone() = runTest {
+        calendar.events += CalendarEvent(
+            1, 1, "Врач",
+            Instant.parse("2026-10-14T07:00:00Z"), Instant.parse("2026-10-14T08:00:00Z"),
+            allDay = false, location = null, color = null,
+        )
+        val before = EventSnapshot.from(calendar.events.single(), TEST_ZONE)
+        val update = ActionProposal.UpdateEvent(
+            1,
+            before,
+            before.copy(startTime = "12:00", endTime = "13:00"),
+        )
+        val updated = executor.execute(update) as ActionResult.Success
+        assertEquals(12, calendar.updated.single().second.start.hour)
+        executor.undo(updated.undo!!)
+        assertEquals(10, calendar.updated.last().second.start.hour)
+        assertEquals("10:00", EventSnapshot.from(calendar.events.single(), TEST_ZONE).startTime)
+
+        val delete = ActionProposal.DeleteEvent(1, before)
+        val deleted = executor.execute(delete) as ActionResult.Success
+        assertTrue(calendar.events.isEmpty())
+        executor.undo(deleted.undo as UndoAction.RecreateEvent)
+        assertEquals(1, calendar.events.size)
+        assertEquals("Врач", calendar.events.single().title)
+    }
+
+    @Test
+    fun updateTaskMovesAndRestoresTheCard() = runTest {
+        val kanban = KanbanRepository(notes)
+        kanban.createBoard("", "Задачи")
+        kanban.update("Задачи.md") { it.addCard(0, KanbanCard.create("Купить молоко", LocalDate.parse("2026-10-16"))) }
+        notes.refresh()
+        val before = TaskSnapshot(
+            boardPath = "Задачи.md",
+            lane = "Сделать",
+            title = "Купить молоко",
+            dueDate = "2026-10-16",
+            text = "Купить молоко @{2026-10-16}",
+        )
+        val after = before.copy(
+            dueDate = "2026-10-20",
+            done = true,
+            text = "Купить молоко @{2026-10-20}",
+        )
+        val result = executor.execute(ActionProposal.UpdateTask(before, after)) as ActionResult.Success
+        val text = File(root, "Задачи.md").readText()
+        assertTrue(text.contains("Купить молоко @{2026-10-20}"))
+        assertTrue(text.contains("- [x] Купить молоко"))
+
+        executor.undo(result.undo!!)
+        val restored = File(root, "Задачи.md").readText()
+        assertTrue(restored.contains("Купить молоко @{2026-10-16}"))
+        assertTrue(restored.contains("- [ ] Купить молоко"))
     }
 }

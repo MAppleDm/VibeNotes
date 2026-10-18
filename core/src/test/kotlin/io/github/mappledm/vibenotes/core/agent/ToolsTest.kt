@@ -1,6 +1,7 @@
 package io.github.mappledm.vibenotes.core.agent
 
 import io.github.mappledm.vibenotes.core.calendar.CalendarEvent
+import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.kanban.KanbanRepository
 import io.github.mappledm.vibenotes.core.notes.NotesRepository
 import io.github.mappledm.vibenotes.core.storage.LocalFileStore
@@ -18,6 +19,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.time.Instant
+import java.time.LocalDate
 
 class ToolsTest {
     @get:Rule
@@ -120,6 +122,54 @@ class ToolsTest {
             allDay = false, location = null, color = null,
         )
         val data = run("list_calendar_events", """{"from":"2026-10-13","to":"2026-10-19"}""") as ToolOutcome.Data
+        assertTrue(data.forModel.contains("id 1:"))
         assertTrue(data.forModel.contains("2026-10-14 10:00–11:00: Стоматолог"))
+    }
+
+    @Test
+    fun updateEventKeepsTheOldValuesForTheCard() = runTest {
+        calendar.events += CalendarEvent(
+            1, 1, "Врач",
+            Instant.parse("2026-10-14T07:00:00Z"), Instant.parse("2026-10-14T08:00:00Z"),
+            allDay = false, location = null, color = null,
+        )
+        val proposal = (run("update_calendar_event", """{"event_id":1,"start_time":"12:00"}""") as ToolOutcome.Propose).proposal
+            as ActionProposal.UpdateEvent
+        assertEquals("Врач", proposal.before.title)
+        assertEquals("10:00", proposal.before.startTime)
+        assertEquals("12:00", proposal.after.startTime)
+        assertEquals(1L, proposal.after.calendarId)
+    }
+
+    @Test
+    fun deleteEventProposesTheCurrentEvent() = runTest {
+        calendar.events += CalendarEvent(
+            7, 1, "Стоматолог",
+            Instant.parse("2026-10-14T07:00:00Z"), Instant.parse("2026-10-14T08:00:00Z"),
+            allDay = false, location = null, color = null,
+        )
+        val proposal = (run("delete_calendar_event", """{"event_id":7}""") as ToolOutcome.Propose).proposal
+            as ActionProposal.DeleteEvent
+        assertEquals(7L, proposal.eventId)
+        assertEquals("Стоматолог", proposal.event.title)
+    }
+
+    @Test
+    fun updateTaskFindsTheCardAndBuildsTheNewLine() = runTest {
+        val kanban = KanbanRepository(notes)
+        kanban.createBoard("", "Задачи")
+        kanban.update("Задачи.md") { it.addCard(0, KanbanCard.create("Купить молоко", LocalDate.parse("2026-10-16"))) }
+        notes.refresh()
+        val proposal = (run("update_task", """{"title":"Купить молоко","due_date":"2026-10-20","done":true}""") as ToolOutcome.Propose).proposal
+            as ActionProposal.UpdateTask
+        assertEquals("2026-10-16", proposal.before.dueDate)
+        assertEquals("2026-10-20", proposal.after.dueDate)
+        assertTrue(proposal.after.done)
+        assertTrue(proposal.after.text.contains("@{2026-10-20}"))
+    }
+
+    @Test
+    fun updateTaskRejectsAnUnknownCard() = runTest {
+        assertTrue(run("update_task", """{"title":"Нет такой"}""") is ToolOutcome.Error)
     }
 }

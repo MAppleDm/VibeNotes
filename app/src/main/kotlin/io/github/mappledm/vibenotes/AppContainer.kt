@@ -26,15 +26,18 @@ import io.github.mappledm.vibenotes.data.SafFileStore
 import io.github.mappledm.vibenotes.data.SecretStore
 import io.github.mappledm.vibenotes.data.SettingsRepository
 import io.github.mappledm.vibenotes.data.StorageLocation
+import io.github.mappledm.vibenotes.data.TaskReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.util.UUID
@@ -85,10 +88,32 @@ class AppContainer(val app: Application) {
         // Request logs of an earlier build ("under the hood" view): private data, no longer used.
         runCatching { File(app.filesDir, "traces.json").delete() }
         openVault(settings.current.storage)
-        appScope.launch { chatStore.load() }
+        appScope.launch { clearChatIfNewDay() }
+        appScope.launch {
+            settings.state.collect { runCatching { TaskReminderScheduler.schedule(app, it) } }
+        }
     }
 
     fun requireVault(): Vault = _vault.value ?: error("Хранилище не выбрано")
+
+    /**
+     * The chat is a scratch pad for today: once the calendar day changes, yesterday's
+     * conversation is dropped. Notes, tasks and events are not affected.
+     */
+    suspend fun clearChatIfNewDay() {
+        chatStore.load()
+        val today = LocalDate.now().toEpochDay()
+        val last = settings.current.chatClearedDay
+        if (last == today) return
+        // First run after installing/updating: keep the chat that is already there and
+        // start the daily cycle today. Otherwise an update would silently erase it.
+        if (last == null) {
+            settings.setChatClearedDay(today)
+            return
+        }
+        chatStore.clear()
+        settings.setChatClearedDay(today)
+    }
 
     fun chooseStorage(location: StorageLocation) {
         if (location is StorageLocation.Folder) {

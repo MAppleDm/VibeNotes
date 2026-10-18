@@ -26,7 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
 import io.github.mappledm.vibenotes.core.agent.BoardInfo
+import io.github.mappledm.vibenotes.core.agent.EventSnapshot
+import io.github.mappledm.vibenotes.core.agent.TaskSnapshot
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
+import io.github.mappledm.vibenotes.core.kanban.KanbanCard
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import io.github.mappledm.vibenotes.ui.components.DatePickerModal
 import io.github.mappledm.vibenotes.ui.components.Dates
@@ -72,6 +75,14 @@ fun ProposalEditorDialog(
                         Text("В «${VaultPaths.baseName(p.path)}»", style = MaterialTheme.typography.bodyMedium)
                         OutlinedTextField(p.text, { draft = p.copy(text = it) }, label = { Text("Текст") }, minLines = 3, modifier = Modifier.fillMaxWidth())
                     }
+                    is ActionProposal.UpdateEvent -> EventFields(p.after.toCreateEvent(), emptyList()) { edited ->
+                        draft = p.copy(after = edited.toSnapshot())
+                    }
+                    is ActionProposal.DeleteEvent -> {
+                        Text(p.event.title, style = MaterialTheme.typography.titleMedium)
+                        Text(eventLine(p.event), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    is ActionProposal.UpdateTask -> UpdateTaskFields(p, { draft = it })
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             }
@@ -167,6 +178,83 @@ private fun TaskFields(p: ActionProposal.AddTask, boards: List<BoardInfo>, onCha
         { onChange(p.copy(dueDate = it.toString())) },
         { pickDate = false },
     )
+}
+
+@Composable
+private fun UpdateTaskFields(p: ActionProposal.UpdateTask, onChange: (ActionProposal.UpdateTask) -> Unit) {
+    var pickDate by remember { mutableStateOf(false) }
+    val after = p.after
+    val due = after.dueDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+    Text(
+        "Доска «${VaultPaths.baseName(after.boardPath)}» → ${after.lane}",
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    OutlinedTextField(
+        after.title,
+        { title -> onChange(p.copy(after = after.withTitle(title))) },
+        label = { Text("Задача") },
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        OutlinedButton(onClick = { pickDate = true }) {
+            Text(due?.let { "Срок: ${Dates.short(it)}" } ?: "Добавить срок")
+        }
+        if (due != null) {
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = {
+                onChange(p.copy(after = after.copy(dueDate = null, dueTime = null, text = KanbanCard.create(after.title, null, null).text)))
+            }) {
+                Text("Убрать")
+            }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Готова", modifier = Modifier.weight(1f))
+        Switch(checked = after.done, onCheckedChange = { onChange(p.copy(after = after.copy(done = it))) })
+    }
+    if (pickDate) {
+        DatePickerModal(due ?: LocalDate.now(), { onChange(p.copy(after = after.withDue(it.toString()))) }, { pickDate = false })
+    }
+}
+
+private fun TaskSnapshot.withTitle(title: String): TaskSnapshot =
+    copy(title = title, text = KanbanCard.create(title, dueDate?.let { LocalDate.parse(it) }, ActionProposal.parseTime(dueTime)).text)
+
+private fun TaskSnapshot.withDue(date: String): TaskSnapshot {
+    val due = runCatching { LocalDate.parse(date) }.getOrNull()
+    return copy(dueDate = date, text = KanbanCard.create(title, due, if (due != null) ActionProposal.parseTime(dueTime) else null).text)
+}
+
+private fun EventSnapshot.toCreateEvent() = ActionProposal.CreateEvent(
+    title = title,
+    date = date,
+    startTime = startTime,
+    endDate = endDate,
+    endTime = endTime,
+    allDay = allDay,
+    location = location,
+    description = description,
+    calendarId = calendarId,
+    reminderMinutes = reminderMinutes,
+)
+
+private fun ActionProposal.CreateEvent.toSnapshot() = EventSnapshot(
+    title = title,
+    date = date,
+    startTime = startTime,
+    endDate = endDate,
+    endTime = endTime,
+    allDay = allDay,
+    location = location,
+    description = description,
+    calendarId = calendarId,
+    reminderMinutes = reminderMinutes,
+)
+
+private fun eventLine(s: EventSnapshot): String {
+    val date = runCatching { LocalDate.parse(s.date) }.getOrNull()?.let { Dates.short(it) } ?: s.date
+    return if (s.allDay) "$date · весь день" else "$date · ${s.startTime ?: ""}–${s.endTime ?: ""}"
 }
 
 private fun hhmm(t: LocalTime) = "%02d:%02d".format(t.hour, t.minute)

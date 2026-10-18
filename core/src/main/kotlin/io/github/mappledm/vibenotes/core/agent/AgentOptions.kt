@@ -24,7 +24,10 @@ enum class DataAccess(val label: String, val description: String, val tools: Set
 @Serializable
 enum class ProposalKind(val label: String) {
     EVENT("события в календарь"),
+    EVENT_UPDATE("перенос событий"),
+    EVENT_DELETE("удаление событий"),
     TASK("задачи на доску"),
+    TASK_UPDATE("изменения задач"),
     NOTE("новые заметки"),
     APPEND("записи в существующие заметки"),
 }
@@ -32,7 +35,10 @@ enum class ProposalKind(val label: String) {
 val ActionProposal.kind: ProposalKind
     get() = when (this) {
         is ActionProposal.CreateEvent -> ProposalKind.EVENT
+        is ActionProposal.UpdateEvent -> ProposalKind.EVENT_UPDATE
+        is ActionProposal.DeleteEvent -> ProposalKind.EVENT_DELETE
         is ActionProposal.AddTask -> ProposalKind.TASK
+        is ActionProposal.UpdateTask -> ProposalKind.TASK_UPDATE
         is ActionProposal.CreateNote -> ProposalKind.NOTE
         is ActionProposal.AppendToNote -> ProposalKind.APPEND
     }
