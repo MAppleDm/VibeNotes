@@ -10,6 +10,7 @@ plugins {
 // CI passes the workflow run number: every published build is newer than the previous one,
 // so the in-app updater can install it over the old version.
 val buildNumber = providers.environmentVariable("VERSION_CODE").orNull?.toIntOrNull()
+val releaseVersion = providers.environmentVariable("VERSION_NAME").orNull
 
 android {
     namespace = "io.github.mappledm.vibenotes"
@@ -20,7 +21,7 @@ android {
         minSdk = 26
         targetSdk = 36
         versionCode = buildNumber ?: 1
-        versionName = if (buildNumber != null) "0.1.$buildNumber" else "0.1.0-dev"
+        versionName = releaseVersion ?: if (buildNumber != null) "0.1.$buildNumber" else "0.1.0-dev"
     }
 
     signingConfigs {
