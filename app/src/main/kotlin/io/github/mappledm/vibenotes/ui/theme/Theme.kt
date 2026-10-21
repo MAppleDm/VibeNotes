@@ -21,34 +21,40 @@ import androidx.compose.ui.unit.sp
 import io.github.mappledm.vibenotes.data.Palette
 import io.github.mappledm.vibenotes.data.ThemeMode
 
-// "Лимон и кофе": warm paper, espresso ink, lemon only where nothing has to be read on top of it.
-// Text colors are picked by contrast, not by mood: body ≥ 15:1, secondary text ≥ 7:1,
-// outlines and Markdown syntax ≥ 4:1 against the background (WCAG).
+// "Лимон и кофе": Lemon Zest accents on Cappuccino / Espresso backgrounds.
+// References: https://www.color-name.com/lemon-zest.color
+// https://github.com/breakthebull/cappuccino#-two-roasts-one-experience
+private val LemonZest = Color(0xFFF9D857)
+private val Cappuccino = Color(0xFFF5F0E8)
+private val Espresso = Color(0xFF2E1F16)
+
+// Against the page background: body ≥ 15:1, secondary text ≥ 7:1,
+// outlines and Markdown syntax ≥ 4:1. Light-theme links stay dark for readability.
 private val LemonCoffeeLight = lightColorScheme(
     primary = Color(0xFF5A3B22),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFFFE27A),
+    primaryContainer = LemonZest,
     onPrimaryContainer = Color(0xFF2A1C0C),
     secondary = Color(0xFF6A5641),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFFFEB9C),
+    secondaryContainer = LemonZest,
     onSecondaryContainer = Color(0xFF2A1C0C),
     tertiary = Color(0xFF6E5600),
     onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFFFF1BF),
+    tertiaryContainer = LemonZest,
     onTertiaryContainer = Color(0xFF241B00),
-    background = Color(0xFFFFFCF6),
+    background = Cappuccino,
     onBackground = Color(0xFF1C1510),
-    surface = Color(0xFFFFFCF6),
+    surface = Cappuccino,
     onSurface = Color(0xFF1C1510),
     surfaceVariant = Color(0xFFF2EADC),
     onSurfaceVariant = Color(0xFF54473A),
-    surfaceContainerLowest = Color.White,
-    surfaceContainerLow = Color(0xFFFAF5EB),
-    surfaceContainer = Color(0xFFF5EEE1),
+    surfaceContainerLowest = Color(0xFFFFFCF6),
+    surfaceContainerLow = Cappuccino,
+    surfaceContainer = Color(0xFFF2EADC),
     surfaceContainerHigh = Color(0xFFEFE6D6),
     surfaceContainerHighest = Color(0xFFE9DECA),
-    outline = Color(0xFF8C7B66),
+    outline = Color(0xFF6A5641),
     outlineVariant = Color(0xFFE2D7C4),
     error = Color(0xFFB3261E),
     onError = Color.White,
@@ -57,30 +63,30 @@ private val LemonCoffeeLight = lightColorScheme(
 )
 
 private val LemonCoffeeDark = darkColorScheme(
-    primary = Color(0xFFFFD95A),
+    primary = LemonZest,
     onPrimary = Color(0xFF2E2200),
-    primaryContainer = Color(0xFF4A3720),
-    onPrimaryContainer = Color(0xFFFFEAA8),
+    primaryContainer = LemonZest,
+    onPrimaryContainer = Color(0xFF2A1C0C),
     secondary = Color(0xFFE3D0B5),
     onSecondary = Color(0xFF3A2C1A),
-    secondaryContainer = Color(0xFF4B3B26),
-    onSecondaryContainer = Color(0xFFFFEAA8),
-    tertiary = Color(0xFFF2D06B),
+    secondaryContainer = LemonZest,
+    onSecondaryContainer = Color(0xFF2A1C0C),
+    tertiary = LemonZest,
     onTertiary = Color(0xFF3A2E00),
-    tertiaryContainer = Color(0xFF4A3E10),
-    onTertiaryContainer = Color(0xFFFFF0BF),
-    background = Color(0xFF16110D),
-    onBackground = Color(0xFFF7EFE4),
-    surface = Color(0xFF16110D),
-    onSurface = Color(0xFFF7EFE4),
+    tertiaryContainer = Color(0xFF4A3720),
+    onTertiaryContainer = LemonZest,
+    background = Espresso,
+    onBackground = Color(0xFFFFFCF6),
+    surface = Espresso,
+    onSurface = Color(0xFFFFFCF6),
     surfaceVariant = Color(0xFF3A2F26),
-    onSurfaceVariant = Color(0xFFD6C8B5),
-    surfaceContainerLowest = Color(0xFF100C09),
-    surfaceContainerLow = Color(0xFF1E1813),
-    surfaceContainer = Color(0xFF241D17),
-    surfaceContainerHigh = Color(0xFF2D241D),
-    surfaceContainerHighest = Color(0xFF372D25),
-    outline = Color(0xFF9A8975),
+    onSurfaceVariant = Color(0xFFE3D0B5),
+    surfaceContainerLowest = Color(0xFF1A120D),
+    surfaceContainerLow = Espresso,
+    surfaceContainer = Color(0xFF372D25),
+    surfaceContainerHigh = Color(0xFF3A2F26),
+    surfaceContainerHighest = Color(0xFF4B3B26),
+    outline = Color(0xFFA39079),
     outlineVariant = Color(0xFF3D332A),
     error = Color(0xFFF2B8B5),
     onError = Color(0xFF601410),
@@ -229,9 +235,9 @@ fun VibeTheme(
     }
     val extra = when {
         palette == Palette.LEMON_COFFEE && dark ->
-            ExtraColors(syntax = Color(0xFFA39079), codeBackground = Color(0xFF271F19), success = Color(0xFFB9DA80), warning = Color(0xFFFFD95A))
+            ExtraColors(syntax = Color(0xFFA39079), codeBackground = Color(0xFF3A2F26), success = Color(0xFFB9DA80), warning = LemonZest)
         palette == Palette.LEMON_COFFEE ->
-            ExtraColors(syntax = Color(0xFF8A7660), codeBackground = Color(0xFFF3ECDF), success = Color(0xFF3F6B1F), warning = Color(0xFF7A5C00))
+            ExtraColors(syntax = Color(0xFF6A5641), codeBackground = Color(0xFFF3ECDF), success = Color(0xFF3F6B1F), warning = Color(0xFF7A5C00))
         dark ->
             ExtraColors(syntax = Color(0xFF6E717B), codeBackground = Color(0xFF1E2024), success = Color(0xFF7FD3A8), warning = Color(0xFFE8C26A))
         else ->
