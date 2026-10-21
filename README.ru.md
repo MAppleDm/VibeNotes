@@ -1,3 +1,5 @@
+<img src="docs/icon.svg" width="96" alt="Иконка VibeNotes">
+
 # VibeNotes
 
 [English](README.md) · **Русский**

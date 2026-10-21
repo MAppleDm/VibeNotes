@@ -1,3 +1,5 @@
+<img src="docs/icon.svg" width="96" alt="VibeNotes app icon">
+
 # VibeNotes
 
 [![Android CI](https://github.com/MAppleDm/VibeNotes/actions/workflows/android.yml/badge.svg?branch=main)](https://github.com/MAppleDm/VibeNotes/actions/workflows/android.yml) [![Release](https://img.shields.io/github/v/release/MAppleDm/VibeNotes)](https://github.com/MAppleDm/VibeNotes/releases/latest) [![License: GPL-3.0](https://img.shields.io/badge/License-GPL--3.0-blue.svg)](LICENSE)
