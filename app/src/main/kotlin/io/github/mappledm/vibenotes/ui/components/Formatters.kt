@@ -2,6 +2,7 @@ package io.github.mappledm.vibenotes.ui.components
 
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -14,11 +15,21 @@ object Dates {
     private val dayMonth = DateTimeFormatter.ofPattern("d MMM", ru)
     private val time = DateTimeFormatter.ofPattern("HH:mm")
     private val full = DateTimeFormatter.ofPattern("d MMM yyyy", ru)
+    private val weekday = DateTimeFormatter.ofPattern("EEEE", ru)
+    private val weekdayShort = DateTimeFormatter.ofPattern("EEE", ru)
+    private val dayMonthLong = DateTimeFormatter.ofPattern("d MMMM", ru)
 
     fun short(date: LocalDate): String = dayShort.format(date).replace(".", "")
     fun long(date: LocalDate): String = dayLong.format(date).replaceFirstChar { it.uppercase() }
     fun dayMonth(date: LocalDate): String = dayMonth.format(date).replace(".", "")
+    /** "Среда" */
+    fun weekday(date: LocalDate): String = weekday.format(date).replaceFirstChar { it.uppercase() }
+    /** "ср" */
+    fun weekdayShort(date: LocalDate): String = weekdayShort.format(date).replace(".", "")
+    /** "22 октября" */
+    fun dayMonthLong(date: LocalDate): String = dayMonthLong.format(date)
     fun time(instant: Instant, zone: ZoneId = ZoneId.systemDefault()): String = time.format(instant.atZone(zone))
+    fun timeOf(value: LocalTime): String = time.format(value)
 
     /** "сегодня", "завтра" or a short date. */
     fun relativeDay(date: LocalDate, today: LocalDate = LocalDate.now()): String = when (date) {

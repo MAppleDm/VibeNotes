@@ -110,15 +110,18 @@ class NotesRepository(private val store: FileStore) {
         return index
     }
 
-    private fun buildMeta(entry: FileEntry, content: String): NoteMeta = NoteMeta(
-        path = entry.path,
-        lastModified = entry.lastModified,
-        size = entry.size,
-        kind = if (KanbanFormat.isBoard(content)) NoteKind.BOARD else NoteKind.NOTE,
-        tags = MarkdownText.tags(content),
-        preview = MarkdownText.preview(content),
-        hiddenFromAi = aiIgnore.isHidden(entry.path),
-    )
+    private fun buildMeta(entry: FileEntry, content: String): NoteMeta {
+        val board = KanbanFormat.isBoard(content)
+        return NoteMeta(
+            path = entry.path,
+            lastModified = entry.lastModified,
+            size = entry.size,
+            kind = if (board) NoteKind.BOARD else NoteKind.NOTE,
+            tags = MarkdownText.tags(content),
+            preview = if (board) KanbanFormat.preview(content) else MarkdownText.preview(content),
+            hiddenFromAi = aiIgnore.isHidden(entry.path),
+        )
+    }
 
     fun cachedContent(path: String): String? = cache[VaultPaths.normalize(path)]?.content
 

@@ -53,6 +53,12 @@ class KanbanFormatTest {
     }
 
     @Test
+    fun previewHidesDueTokens() {
+        val board = "---\nkanban-plugin: board\n---\n\n## Todo\n\n- [ ] Call mom @{2026-10-21} @@{13:00}\n- [ ] Pay bills @{2026-10-16}\n"
+        assertEquals("Todo · Call mom · Pay bills", KanbanFormat.preview(board))
+    }
+
+    @Test
     fun roundTripKeepsFileByteForByte() {
         val canonical = """
             ---

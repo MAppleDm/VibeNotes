@@ -1,6 +1,7 @@
 package io.github.mappledm.vibenotes.core.kanban
 
 import io.github.mappledm.vibenotes.core.markdown.Frontmatter
+import io.github.mappledm.vibenotes.core.markdown.MarkdownText
 
 /**
  * Reads and writes boards in the Markdown format of the Obsidian Kanban plugin,
@@ -38,6 +39,9 @@ object KanbanFormat {
     private val cardRegex = Regex("""^[-*+]\s+(?:\[([ xX])]\s?)?(.*)$""")
 
     fun isBoard(text: String): Boolean = Frontmatter.split(text).first.values.containsKey(FRONTMATTER_KEY)
+
+    /** Preview for the note list: like a note's, without the plugin's @{date} and @@{time} tokens. */
+    fun preview(text: String): String = MarkdownText.preview(text.lines().joinToString("\n") { KanbanCard.stripDue(it) })
 
     fun parse(text: String): KanbanBoard {
         val normalized = text.replace("\r\n", "\n")

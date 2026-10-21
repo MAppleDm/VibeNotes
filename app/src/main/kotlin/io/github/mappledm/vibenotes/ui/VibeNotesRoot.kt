@@ -233,7 +233,11 @@ private fun HomeTabs(
                     onOpenBoard = openBoard,
                     onOpenSettings = openSettings,
                 )
-                TAB_WEEK -> WeekScreen(onOpenSettings = openSettings, onOpenBoard = openBoard)
+                TAB_WEEK -> WeekScreen(
+                    onOpenSettings = openSettings,
+                    onOpenBoard = openBoard,
+                    onOpenInbox = { scope.launch { pager.animateScrollToPage(TAB_INBOX) } },
+                )
                 TAB_TASKS -> key(settings.defaultBoard) {
                     BoardScreen(
                         path = settings.defaultBoard,

@@ -13,8 +13,8 @@ Write “doctor on Thursday morning” and the assistant proposes an event you c
 ## Features
 
 - **One inbox:** turn messages into notes, tasks, or calendar proposals; review changes before applying them and undo completed actions.
-- **Markdown notes:** edit and preview, search, tags, folders, checklists, and `[[internal links]]`.
-- **Tasks and week view:** Kanban boards, due dates, and a weekly reminder.
+- **Markdown notes:** edit and preview, search, tags, folders, checklists, and `[[internal links]]`; the note list shows a few terse AI-written key points instead of the first lines (never for notes hidden from AI).
+- **Tasks and week overview:** Kanban boards, due dates, a weekly reminder, and a week view of events and tasks by day that hands planning to the inbox and details to your calendar app.
 - **Android calendar:** use calendars already connected on your phone, including Google calendars, through Android's Calendar Provider.
 - **Your AI provider:** bring a DeepSeek key or configure another OpenAI-compatible endpoint.
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -66,6 +68,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mappledm.vibenotes.core.notes.NoteKind
 import io.github.mappledm.vibenotes.core.notes.NoteMeta
+import io.github.mappledm.vibenotes.core.preview.AiPreviews
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import io.github.mappledm.vibenotes.ui.components.Dates
 import io.github.mappledm.vibenotes.ui.components.OnResume
@@ -173,9 +176,10 @@ fun NotesScreen(
                     item { SectionHeader("Закреплённые") }
                     items(state.pinned, key = { "pin:" + it.path }) { meta ->
                         NoteRow(
-                            meta, meta.preview, true, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
+                            meta, state.aiPreviews[meta.path] ?: meta.preview, true, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
                             onToggleAi = { vm.setHiddenFromAi(meta.path, false, !meta.hiddenFromAi) },
                             showFolder = true,
+                            aiPreview = meta.path in state.aiPreviews,
                         )
                     }
                     item { HorizontalDivider(Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.outlineVariant) }
@@ -191,8 +195,9 @@ fun NotesScreen(
                 }
                 items(state.notes, key = { it.path }) { meta ->
                     NoteRow(
-                        meta, meta.preview, meta.path in state.pinnedPaths, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
+                        meta, state.aiPreviews[meta.path] ?: meta.preview, meta.path in state.pinnedPaths, { open(meta) }, { vm.togglePin(meta.path) }, { renaming = meta }, { moving = meta }, { deleting = meta },
                         onToggleAi = { vm.setHiddenFromAi(meta.path, false, !meta.hiddenFromAi) },
+                        aiPreview = meta.path in state.aiPreviews,
                     )
                 }
                 if (state.loaded && state.notes.isEmpty() && state.subfolders.isEmpty()) {
@@ -286,6 +291,8 @@ private fun NoteRow(
     onDelete: () -> Unit,
     onToggleAi: () -> Unit,
     showFolder: Boolean = false,
+    /** [subtitle] was written by AI: marked so it is not mistaken for the note's own text. */
+    aiPreview: Boolean = false,
 ) {
     var menu by remember { mutableStateOf(false) }
     Box {
@@ -293,7 +300,7 @@ private fun NoteRow(
             Modifier
                 .fillMaxWidth()
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true })
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.Top,
         ) {
             Icon(
@@ -305,16 +312,19 @@ private fun NoteRow(
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(meta.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                    if (pinned) {
-                        Spacer(Modifier.width(6.dp))
-                        Icon(Icons.Outlined.PushPin, "Закреплено", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                    // Title and marks take the free width, so the time always sits at the right edge.
+                    Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Text(meta.title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                        if (pinned) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Outlined.PushPin, "Закреплено", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                        }
+                        if (meta.hiddenFromAi) {
+                            Spacer(Modifier.width(6.dp))
+                            Icon(Icons.Outlined.Lock, "Скрыто от AI", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
-                    if (meta.hiddenFromAi) {
-                        Spacer(Modifier.width(6.dp))
-                        Icon(Icons.Outlined.Lock, "Скрыто от AI", Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
                     Text(Dates.modified(meta.lastModified), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 val secondLine = buildString {
@@ -322,7 +332,25 @@ private fun NoteRow(
                     append(subtitle)
                 }
                 if (secondLine.isNotBlank()) {
-                    Text(secondLine, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.Top) {
+                        if (aiPreview) {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                "Описание от AI",
+                                Modifier.padding(top = 3.dp, end = 4.dp).size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // AI theses come one per line and may wrap; plain text is the start of the note.
+                        Text(
+                            secondLine,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = if (aiPreview) AiPreviews.MAX_LINES + 2 else 3,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
             }
         }

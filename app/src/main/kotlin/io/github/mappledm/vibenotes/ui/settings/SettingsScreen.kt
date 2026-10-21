@@ -309,7 +309,30 @@ private fun TasksSection(vm: SettingsViewModel, settings: AppSettings) {
     TextButton(onClick = { vm.setInboxNote(inbox) }, enabled = inbox.isNotBlank() && inbox != settings.inboxNote) { Text("Сохранить") }
 
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    NotePreviewSettings(vm, settings)
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     TaskReminderSettings(vm, settings)
+}
+
+@Composable
+private fun NotePreviewSettings(vm: SettingsViewModel, settings: AppSettings) {
+    val hasKey by vm.hasKey.collectAsStateWithLifecycle()
+    Group("Список заметок")
+    SwitchRow(
+        "Описание от AI",
+        "Вместо первых строк — главное из заметки сжатыми тезисами. Такие описания помечены звёздочками.",
+        settings.aiPreviews,
+        vm::setAiPreviews,
+    )
+    Hint(
+        "Текст заметки отправляется провайдеру AI один раз и снова — только после изменений. " +
+            "Скрытые от AI заметки и файлы *.env не отправляются никогда, короткие заметки показываются как есть.",
+    )
+    when {
+        !settings.aiPreviews -> Unit
+        !hasKey -> Hint("Заработает, когда будет подключён AI.")
+        DataAccess.NOTES.tools.any { it in settings.disabledTools } -> Hint("Сейчас не работает: в «Ассистент» выключен доступ к заметкам.")
+    }
 }
 
 @Composable
@@ -397,7 +420,8 @@ private fun PrivacySection(vm: SettingsViewModel, onOpenNote: (String) -> Unit) 
         "• ваше сообщение и последние сообщения чата;\n" +
             "• служебный контекст: дата и время, названия досок, колонок, папок и календарей;\n" +
             "• заметки, задачи и события — только когда ассистент их ищет или читает, и только то, что разрешено в «Ассистент». Каждое такое действие видно в чате над ответом;\n" +
-            "• ваш файл инструкций, если он включён в «Ассистент».\n" +
+            "• ваш файл инструкций, если он включён в «Ассистент»;\n" +
+            "• текст заметок для описаний в списке, если они включены в «Задачи и заметки».\n" +
             "Без ключа приложение полностью офлайн.",
     )
     Label("Скрытые от AI заметки")

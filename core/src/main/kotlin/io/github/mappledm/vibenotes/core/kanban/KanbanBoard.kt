@@ -13,7 +13,7 @@ data class KanbanCard(
     val checked: Boolean = false,
     val continuation: List<String> = emptyList(),
 ) {
-    val title: String get() = text.replace(dateTokenRegex, "").replace(timeTokenRegex, "").replace(Regex("\\s+"), " ").trim()
+    val title: String get() = stripDue(text).replace(Regex("\\s+"), " ").trim()
 
     val dueDate: LocalDate? get() = dateTokenRegex.find(text)?.groupValues?.get(1)?.let { parseDate(it) }
 
@@ -21,7 +21,7 @@ data class KanbanCard(
 
     /** Returns a copy with the due date/time tokens replaced (null removes them). */
     fun withDue(date: LocalDate?, time: LocalTime? = null): KanbanCard {
-        val base = text.replace(timeTokenRegex, "").replace(dateTokenRegex, "").replace(Regex("\\s+"), " ").trim()
+        val base = stripDue(text).replace(Regex("\\s+"), " ").trim()
         val sb = StringBuilder(base)
         if (date != null) {
             sb.append(" @{").append(date).append('}')
@@ -40,6 +40,9 @@ data class KanbanCard(
         // Braces are escaped everywhere: Android's ICU regex engine rejects a bare "}".
         private val dateTokenRegex = Regex("""(?<!@)@\{([^\}]+)\}""")
         private val timeTokenRegex = Regex("""@@\{([^\}]+)\}""")
+
+        /** [text] without the @{date} and @@{time} tokens. */
+        fun stripDue(text: String): String = text.replace(timeTokenRegex, "").replace(dateTokenRegex, "")
 
         fun create(title: String, due: LocalDate? = null, time: LocalTime? = null): KanbanCard =
             KanbanCard(title.replace('\n', ' ').trim()).withDue(due, time)

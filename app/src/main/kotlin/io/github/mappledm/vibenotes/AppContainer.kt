@@ -8,6 +8,7 @@ import io.github.mappledm.vibenotes.core.agent.ProposalKind
 import io.github.mappledm.vibenotes.core.agent.AssistantContext
 import io.github.mappledm.vibenotes.core.agent.AssistantEngine
 import io.github.mappledm.vibenotes.core.agent.BoardInfo
+import io.github.mappledm.vibenotes.core.agent.DataAccess
 import io.github.mappledm.vibenotes.core.agent.DefaultActionExecutor
 import io.github.mappledm.vibenotes.core.agent.ToolRegistry
 import io.github.mappledm.vibenotes.core.ai.OpenAiCompatibleClient
@@ -17,6 +18,7 @@ import io.github.mappledm.vibenotes.core.inbox.InboxService
 import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
 import io.github.mappledm.vibenotes.core.kanban.KanbanRepository
 import io.github.mappledm.vibenotes.core.notes.NotesRepository
+import io.github.mappledm.vibenotes.core.preview.AiPreviews
 import io.github.mappledm.vibenotes.core.storage.FileStore
 import io.github.mappledm.vibenotes.core.storage.LocalFileStore
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
@@ -30,6 +32,7 @@ import io.github.mappledm.vibenotes.data.TaskReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +53,7 @@ class Vault(
     val kanban: KanbanRepository,
     val executor: ActionExecutor,
     val inbox: InboxService,
+    val previews: AiPreviews,
 )
 
 /**
@@ -69,6 +73,8 @@ class AppContainer(val app: Application) {
     val pendingShare = MutableStateFlow<String?>(null)
 
     private val _vault = MutableStateFlow<Vault?>(null)
+    /** Background work of the current vault; cancelled when another folder is opened. */
+    private var vaultScope: CoroutineScope? = null
     val vault: StateFlow<Vault?> = _vault.asStateFlow()
 
     /** Stack trace of the previous crash, shown once so it can be copied into a bug report. */
@@ -130,6 +136,8 @@ class AppContainer(val app: Application) {
     }
 
     private fun openVault(location: StorageLocation?) {
+        vaultScope?.cancel()
+        vaultScope = null
         val store: FileStore = when (location) {
             null -> {
                 _vault.value = null
@@ -163,8 +171,24 @@ class AppContainer(val app: Application) {
             historySize = { settings.current.historySize },
             autoApply = { settings.current.autoApply.mapNotNull { name -> runCatching { ProposalKind.valueOf(name) }.getOrNull() }.toSet() },
         )
-        _vault.value = Vault(UUID.randomUUID().toString(), store.displayName, notes, kanban, executor, inbox)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default).also { vaultScope = it }
+        val previews = AiPreviews(
+            notes = notes,
+            llm = llm,
+            // One cache per folder: the same path in another vault is another note.
+            cacheFile = File(app.filesDir, "previews/${AiPreviews.hash(location.encode())}.json"),
+            config = { withContext(Dispatchers.IO) { providerConfig() } },
+            enabled = ::aiPreviewsEnabled,
+            scope = scope,
+        )
+        _vault.value = Vault(UUID.randomUUID().toString(), store.displayName, notes, kanban, executor, inbox, previews)
         appScope.launch { runCatching { notes.refresh() } }
+    }
+
+    /** Previews obey the assistant's "notes" access switch: when it is off, no note text goes to AI. */
+    private fun aiPreviewsEnabled(): Boolean {
+        val s = settings.current
+        return s.aiPreviews && DataAccess.NOTES.tools.none { it in s.disabledTools }
     }
 
     /** Null when no API key is stored: the Inbox then works as a plain capture box. */
