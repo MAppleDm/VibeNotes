@@ -206,6 +206,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun setAccess(access: DataAccess, enabled: Boolean) = container.settings.setToolsEnabled(access.tools, enabled)
     fun setAutoApply(kind: String, enabled: Boolean) = container.settings.setAutoApply(kind, enabled)
     fun setUseInstructions(value: Boolean) = container.settings.setUseInstructions(value)
+    fun setAiPreviews(value: Boolean) = container.settings.setAiPreviews(value)
     fun setAutoUpdateCheck(value: Boolean) = container.settings.setAutoUpdateCheck(value)
     fun setTaskReminderEnabled(value: Boolean) = container.settings.setTaskReminderEnabled(value)
     fun setTaskReminderDay(value: Int) = container.settings.setTaskReminderDay(value)

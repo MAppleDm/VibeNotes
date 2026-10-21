@@ -75,6 +75,8 @@ data class AppSettings(
     val taskReminderDay: Int = 1,
     val taskReminderHour: Int = 10,
     val taskReminderMinute: Int = 0,
+    /** AI-written descriptions instead of the first lines in the note list. */
+    val aiPreviews: Boolean = true,
 )
 
 /** Small key-value settings; SharedPreferences is enough and has no extra dependencies. */
@@ -112,6 +114,7 @@ class SettingsRepository(context: Context) {
         taskReminderDay = prefs.getInt(KEY_TASK_REMINDER_DAY, 1).coerceIn(1, 7),
         taskReminderHour = prefs.getInt(KEY_TASK_REMINDER_HOUR, 10).coerceIn(0, 23),
         taskReminderMinute = prefs.getInt(KEY_TASK_REMINDER_MINUTE, 0).coerceIn(0, 59),
+        aiPreviews = prefs.getBoolean(KEY_AI_PREVIEWS, true),
     )
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -157,6 +160,7 @@ class SettingsRepository(context: Context) {
         putStringSet(KEY_AUTO_APPLY, if (enabled) current.autoApply + kind else current.autoApply - kind)
     }
     fun setUseInstructions(value: Boolean) = edit { putBoolean(KEY_USE_INSTRUCTIONS, value) }
+    fun setAiPreviews(value: Boolean) = edit { putBoolean(KEY_AI_PREVIEWS, value) }
     fun setAutoUpdateCheck(value: Boolean) = edit { putBoolean(KEY_AUTO_UPDATE, value) }
     fun setLastUpdateCheck(millis: Long) = edit { putLong(KEY_LAST_UPDATE_CHECK, millis) }
     fun setDismissedUpdate(versionCode: Long) = edit { putLong(KEY_DISMISSED_UPDATE, versionCode) }
@@ -186,6 +190,7 @@ class SettingsRepository(context: Context) {
         private const val KEY_AUTO_APPLY = "ai_auto_apply"
         private const val KEY_USE_INSTRUCTIONS = "ai_use_instructions"
         private const val KEY_INSTRUCTIONS_FILE = "ai_instructions_file"
+        private const val KEY_AI_PREVIEWS = "ai_note_previews"
         private const val KEY_CHAT_CLEARED = "chat_cleared_day"
         private const val KEY_TASK_REMINDER = "task_reminder"
         private const val KEY_TASK_REMINDER_DAY = "task_reminder_day"

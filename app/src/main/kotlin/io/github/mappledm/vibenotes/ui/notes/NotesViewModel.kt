@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
 import io.github.mappledm.vibenotes.core.notes.NoteMeta
+import io.github.mappledm.vibenotes.core.notes.VaultIndex
 import io.github.mappledm.vibenotes.core.notes.SearchHit
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import kotlinx.coroutines.Dispatchers
@@ -27,11 +28,14 @@ data class NotesUiState(
     val allFolders: List<String> = emptyList(),
     val pinnedPaths: Set<String> = emptySet(),
     val hiddenFolders: Set<String> = emptySet(),
+    /** Note path → AI-written preview, shown instead of [NoteMeta.preview]. */
+    val aiPreviews: Map<String, String> = emptyMap(),
 )
 
 class NotesViewModel(private val container: AppContainer, private val folder: String) : ViewModel() {
     private val vault = container.requireVault()
     private val notes = vault.notes
+    private val previews = vault.previews
     private val query = MutableStateFlow("")
 
     private val _message = MutableStateFlow<UndoMessage?>(null)
@@ -39,10 +43,11 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
 
     data class UndoMessage(val text: String, val trashPath: String? = null, val originalPath: String? = null)
 
-    val state: StateFlow<NotesUiState> = combine(notes.index, query, container.settings.state) { index, q, settings ->
+    val state: StateFlow<NotesUiState> = combine(notes.index, query, container.settings.state, previews.entries) { index, q, settings, ai ->
         val inFolder = index.notes.filter { it.folder == folder }
         val subfolders = index.folders.filter { VaultPaths.parent(it) == folder }
         val pinned = if (folder.isEmpty()) index.notes.filter { it.path in settings.pinned } else emptyList()
+        val shown = pinned + inFolder
         NotesUiState(
             folder = folder,
             subfolders = subfolders.sortedBy { it.lowercase() },
@@ -54,12 +59,26 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
             allFolders = listOf("") + index.folders,
             pinnedPaths = settings.pinned,
             hiddenFolders = index.hiddenFolders,
+            aiPreviews = shown.mapNotNull { meta -> previews.textFor(meta, ai)?.let { meta.path to it } }.toMap(),
         )
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesUiState(folder = folder))
 
+    /** Re-reads the folder, then asks for AI previews of new and edited notes on screen. */
     fun refresh() {
-        viewModelScope.launch { runCatching { notes.refresh() }.onFailure { show(it.message ?: "Не удалось обновить список") } }
+        viewModelScope.launch {
+            runCatching { notes.refresh() }
+                .onSuccess { previews.request(shownPaths(it)) }
+                .onFailure { show(it.message ?: "Не удалось обновить список") }
+        }
+    }
+
+    private fun shownPaths(index: VaultIndex): List<String> {
+        val pinned = container.settings.current.pinned
+        return index.notes
+            .filter { it.folder == folder || (folder.isEmpty() && it.path in pinned) }
+            .sortedByDescending { it.lastModified }
+            .map { it.path }
     }
 
     fun setQuery(value: String) {
