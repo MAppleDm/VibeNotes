@@ -84,7 +84,7 @@ object ProposalValidator {
             before.boardPath.isBlank() || after.boardPath.isBlank() -> "Не выбрана доска"
             before.lane.isBlank() || after.lane.isBlank() -> "Не выбрана колонка"
             before.title.isBlank() || after.title.isBlank() -> "Укажите текст задачи"
-            before.boardPath != after.boardPath || before.lane != after.lane -> "Задачу можно менять только на месте"
+            before.boardPath != after.boardPath -> "Задачу можно переносить только в пределах доски"
             after.dueDate != null && runCatching { LocalDate.parse(after.dueDate) }.isFailure -> "Неверная дата"
             after.dueTime != null && ActionProposal.parseTime(after.dueTime) == null -> "Неверное время"
             else -> null
@@ -342,7 +342,14 @@ class DefaultActionExecutor(
             text = result.lanes[ref.lane].cards[ref.index].text
             ref = CardRef(ref.lane, ref.index, text)
         }
-        if (to.done != from.done) {
+        if (!to.lane.equals(from.lane, ignoreCase = true)) {
+            val lane = result.laneIndex(to.lane).takeIf { it >= 0 }
+                ?: throw KanbanException("Колонки «${to.lane}» на доске больше нет")
+            result = result.moveCard(ref, lane)
+            ref = findCard(result, text) ?: throw KanbanException("Карточка потерялась при переносе")
+        }
+        val done = result.card(ref)?.let { it.checked || result.lanes[ref.lane].isComplete } ?: from.done
+        if (to.done != done) {
             result = result.setChecked(ref, to.done)
         }
         return result to text

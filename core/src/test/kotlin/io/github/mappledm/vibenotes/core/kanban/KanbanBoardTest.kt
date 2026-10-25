@@ -103,4 +103,38 @@ class KanbanBoardTest {
         }
         assertEquals("обычная заметка", File(root, "Список.md").readText())
     }
+
+    @Test
+    fun archiveTakesCardsOffTheBoardAndBack() {
+        val b = board().setChecked(CardRef(0, 0, "A"), true)
+        assertEquals(1, b.finishedCount)
+
+        val archived = b.archiveFinished()
+        assertEquals(listOf("A"), archived.archived.map { it.text })
+        assertTrue(archived.lanes[2].cards.isEmpty())
+        assertEquals(listOf("B"), archived.lanes[0].cards.map { it.text })
+        assertEquals(0, archived.finishedCount)
+
+        val single = archived.archiveCard(CardRef(0, 0, "B"))
+        assertEquals(listOf("A", "B"), single.archived.map { it.text })
+
+        val restored = single.restoreArchived(0, "A", toLane = 0)
+        assertEquals(listOf("A"), restored.lanes[0].cards.map { it.text })
+        assertFalse(restored.lanes[0].cards.single().checked)
+        assertEquals(listOf("B"), restored.archived.map { it.text })
+
+        assertTrue(restored.deleteArchived(0, "B").archived.isEmpty())
+    }
+
+    @Test
+    fun undoPutsCardsBackInPlace() {
+        val b = board()
+        val removed = b.removeCard(CardRef(0, 0, "A"))
+        val undone = removed.insertCard("Сделать", 0, KanbanCard.create("A"))
+        assertEquals(listOf("A", "B"), undone.lanes[0].cards.map { it.text })
+
+        val unarchived = b.archiveCard(CardRef(0, 1, "B")).unarchiveLast("B").insertCard("Сделать", 1, KanbanCard.create("B"))
+        assertEquals(b, unarchived.copy(archive = null))
+        assertTrue(unarchived.archived.isEmpty())
+    }
 }

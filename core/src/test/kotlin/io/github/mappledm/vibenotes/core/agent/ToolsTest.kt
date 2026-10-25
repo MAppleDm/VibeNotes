@@ -169,6 +169,25 @@ class ToolsTest {
     }
 
     @Test
+    fun updateTaskMovesTheCardToAnotherColumn() = runTest {
+        val kanban = KanbanRepository(notes)
+        kanban.createBoard("", "Задачи")
+        kanban.update("Задачи.md") { it.addCard(0, KanbanCard.create("Отчёт")) }
+        notes.refresh()
+        val started = (run("update_task", """{"title":"Отчёт","move_to_column":"в работе"}""") as ToolOutcome.Propose).proposal
+            as ActionProposal.UpdateTask
+        assertEquals("Сделать", started.before.lane)
+        assertEquals("В работе", started.after.lane)
+        assertFalse(started.after.done)
+
+        val finished = (run("update_task", """{"title":"Отчёт","move_to_column":"Готово"}""") as ToolOutcome.Propose).proposal
+            as ActionProposal.UpdateTask
+        assertTrue(finished.after.done)
+
+        assertTrue(run("update_task", """{"title":"Отчёт","move_to_column":"Когда-нибудь"}""") is ToolOutcome.Error)
+    }
+
+    @Test
     fun updateTaskRejectsAnUnknownCard() = runTest {
         assertTrue(run("update_task", """{"title":"Нет такой"}""") is ToolOutcome.Error)
     }

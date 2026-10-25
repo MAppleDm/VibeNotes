@@ -107,7 +107,7 @@ val TEST_NOW: ZonedDateTime = ZonedDateTime.of(2026, 10, 13, 10, 30, 0, 0, TEST_
 
 fun testContext(
     calendars: List<CalendarInfo>? = FakeCalendar().calendars,
-    boards: List<BoardInfo> = listOf(BoardInfo("Задачи.md", "Задачи", listOf("Сделать", "В работе", "Готово"))),
+    boards: List<BoardInfo> = listOf(BoardInfo("Задачи.md", "Задачи", listOf("Сделать", "В работе", "Готово"), doneLanes = listOf("Готово"))),
 ) = AssistantContext(
     now = TEST_NOW,
     boards = boards,

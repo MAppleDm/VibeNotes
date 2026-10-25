@@ -204,7 +204,9 @@ class AppContainer(val app: Application) {
         // Private boards and folders (.aiignore) are not even named to the model.
         val boards = index.boards.filterNot { it.hiddenFromAi }.mapNotNull { meta ->
             val content = notes.cachedContent(meta.path) ?: return@mapNotNull null
-            BoardInfo(meta.path, meta.title, KanbanFormat.parse(content).lanes.map { it.title })
+            KanbanFormat.parse(content).lanes.let { lanes ->
+                BoardInfo(meta.path, meta.title, lanes.map { it.title }, lanes.filter { it.isComplete }.map { it.title })
+            }
         }
         val calendars = if (calendar.hasPermission()) runCatching { calendar.writableCalendars() }.getOrNull() else null
         // With several calendars and no saved choice the card asks the user instead of guessing.

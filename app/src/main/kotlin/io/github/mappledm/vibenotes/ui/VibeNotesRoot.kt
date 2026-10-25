@@ -54,6 +54,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import io.github.mappledm.vibenotes.AppContainer
 import io.github.mappledm.vibenotes.Vault
+import io.github.mappledm.vibenotes.ui.calendar.CalendarScreen
 import io.github.mappledm.vibenotes.ui.editor.EditorScreen
 import io.github.mappledm.vibenotes.ui.inbox.InboxScreen
 import io.github.mappledm.vibenotes.ui.kanban.BoardScreen
@@ -63,12 +64,11 @@ import io.github.mappledm.vibenotes.ui.settings.SettingsScreen
 import io.github.mappledm.vibenotes.ui.theme.MonoStyle
 import io.github.mappledm.vibenotes.ui.theme.VibeTheme
 import io.github.mappledm.vibenotes.ui.theme.appFontFamily
-import io.github.mappledm.vibenotes.ui.week.WeekScreen
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 const val TAB_INBOX = 0
-const val TAB_WEEK = 1
+const val TAB_CALENDAR = 1
 const val TAB_TASKS = 2
 const val TAB_NOTES = 3
 
@@ -76,7 +76,7 @@ private data class Tab(val label: String, val icon: ImageVector)
 
 private val Tabs = listOf(
     Tab("Входящие", Icons.Outlined.Inbox),
-    Tab("Неделя", Icons.Outlined.CalendarMonth),
+    Tab("Календарь", Icons.Outlined.CalendarMonth),
     Tab("Задачи", Icons.Outlined.ViewColumn),
     Tab("Заметки", Icons.Outlined.Folder),
 )
@@ -183,7 +183,7 @@ private fun MainNavigation(container: AppContainer, vault: Vault) {
     }
 }
 
-/** Inbox · Week · Tasks · Notes: swipe left/right or tap the bottom bar. */
+/** Inbox · Calendar · Tasks · Notes: swipe left/right or tap the bottom bar. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun HomeTabs(
@@ -233,7 +233,7 @@ private fun HomeTabs(
                     onOpenBoard = openBoard,
                     onOpenSettings = openSettings,
                 )
-                TAB_WEEK -> WeekScreen(
+                TAB_CALENDAR -> CalendarScreen(
                     onOpenSettings = openSettings,
                     onOpenBoard = openBoard,
                     onOpenInbox = { scope.launch { pager.animateScrollToPage(TAB_INBOX) } },

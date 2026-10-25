@@ -31,7 +31,8 @@ sealed interface ToolOutcome {
     data class Error(val forModel: String, val activity: ToolActivity? = null) : ToolOutcome
 }
 
-data class BoardInfo(val path: String, val title: String, val lanes: List<String>)
+/** [doneLanes]: the board's complete columns; moving a card there marks it done. */
+data class BoardInfo(val path: String, val title: String, val lanes: List<String>, val doneLanes: List<String> = emptyList())
 
 /** Facts about the user's environment that the model needs to fill in proposals. */
 data class AssistantContext(

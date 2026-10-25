@@ -165,4 +165,20 @@ class ActionExecutorTest {
         assertTrue(restored.contains("Купить молоко @{2026-10-16}"))
         assertTrue(restored.contains("- [ ] Купить молоко"))
     }
+
+    @Test
+    fun updateTaskStartsWorkAndUndoReturnsTheCard() = runTest {
+        val kanban = KanbanRepository(notes)
+        kanban.createBoard("", "Задачи")
+        kanban.update("Задачи.md") { it.addCard(0, KanbanCard.create("Отчёт")) }
+        notes.refresh()
+        val before = TaskSnapshot(boardPath = "Задачи.md", lane = "Сделать", title = "Отчёт", text = "Отчёт")
+        val result = executor.execute(ActionProposal.UpdateTask(before, before.copy(lane = "В работе"))) as ActionResult.Success
+        val board = kanban.load("Задачи.md")
+        assertEquals(listOf("Отчёт"), board.lanes[1].cards.map { it.text })
+        assertTrue(board.lanes[0].cards.isEmpty())
+
+        executor.undo(result.undo!!)
+        assertEquals(listOf("Отчёт"), kanban.load("Задачи.md").lanes[0].cards.map { it.text })
+    }
 }

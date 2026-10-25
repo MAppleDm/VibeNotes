@@ -31,6 +31,18 @@ object Dates {
     fun time(instant: Instant, zone: ZoneId = ZoneId.systemDefault()): String = time.format(instant.atZone(zone))
     fun timeOf(value: LocalTime): String = time.format(value)
 
+    /** "Октябрь" (hard-coded: standalone month names from java.time are not reliable on every Android version). */
+    fun monthName(month: Int): String = MONTHS[month - 1]
+
+    /** "Октябрь" this year, "Октябрь 2025" otherwise. */
+    fun monthYear(date: LocalDate, today: LocalDate = LocalDate.now()): String =
+        monthName(date.monthValue) + if (date.year != today.year) " ${date.year}" else ""
+
+    private val MONTHS = listOf(
+        "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+        "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+    )
+
     /** "сегодня", "завтра" or a short date. */
     fun relativeDay(date: LocalDate, today: LocalDate = LocalDate.now()): String = when (date) {
         today -> "сегодня"

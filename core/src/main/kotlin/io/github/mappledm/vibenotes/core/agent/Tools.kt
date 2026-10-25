@@ -443,7 +443,8 @@ class UpdateTaskTool(private val kanban: KanbanRepository, private val notes: No
     override val kind = ToolKind.PROPOSE
     override val spec = ToolSpec(
         name = "update_task",
-        description = "Proposes changing an existing Kanban card: a new title, due date/time, or done state. " +
+        description = "Proposes changing an existing Kanban card: a new title, due date/time, done state, or moving it " +
+            "to another column of its board (e.g. starting work on it). " +
             "Call list_tasks first and use the exact board, column and card title. The card shows what will change; " +
             "nothing is written until the user confirms.",
         parameters = schema {
@@ -455,6 +456,7 @@ class UpdateTaskTool(private val kanban: KanbanRepository, private val notes: No
             prop("due_time", "string", "New due time HH:mm (requires a due date)")
             prop("clear_due", "boolean", "True to remove the due date")
             prop("done", "boolean", "True to mark the card done, false to reopen it")
+            prop("move_to_column", "string", "Column of the same board to move the card to, e.g. the in-progress column")
         },
     )
 
@@ -495,6 +497,12 @@ class UpdateTaskTool(private val kanban: KanbanRepository, private val notes: No
             else -> task.card.dueTime
         }
         val afterTitle = args.string("new_title") ?: task.card.title
+        val boardInfo = context.boards.firstOrNull { it.path.equals(task.boardPath, true) }
+        val lanes = boardInfo?.lanes.orEmpty()
+        val moveTo = args.string("move_to_column")?.let { column ->
+            lanes.firstOrNull { it.equals(column.trim(), true) }
+                ?: return ToolOutcome.Error("Column '$column' not found. Columns of this board: ${lanes.joinToString(", ")}.")
+        }
         val before = TaskSnapshot(
             boardPath = task.boardPath,
             lane = task.laneTitle,
@@ -504,11 +512,14 @@ class UpdateTaskTool(private val kanban: KanbanRepository, private val notes: No
             done = task.card.checked || task.laneIsComplete,
             text = task.card.text,
         )
+        // A complete column checks the card, any other column reopens it (as on the board itself).
+        val movedDone = moveTo?.let { column -> boardInfo?.doneLanes.orEmpty().any { it.equals(column, true) } }
         val after = before.copy(
+            lane = moveTo ?: before.lane,
             title = afterTitle,
             dueDate = dueDate?.toString(),
             dueTime = dueTime?.let { hhmm(it) },
-            done = args.bool("done") ?: before.done,
+            done = args.bool("done") ?: movedDone ?: before.done,
             text = KanbanCard.create(afterTitle, dueDate, if (dueDate != null) dueTime else null).text,
         )
         if (after == before) return ToolOutcome.Error("Nothing changed. Ask the user what to change.")

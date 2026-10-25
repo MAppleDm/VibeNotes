@@ -53,9 +53,10 @@ class KanbanFormatTest {
     }
 
     @Test
-    fun previewHidesDueTokens() {
-        val board = "---\nkanban-plugin: board\n---\n\n## Todo\n\n- [ ] Call mom @{2026-10-21} @@{13:00}\n- [ ] Pay bills @{2026-10-16}\n"
-        assertEquals("Todo · Call mom · Pay bills", KanbanFormat.preview(board))
+    fun previewSummarisesColumnsAndOpenCards() {
+        val board = "---\nkanban-plugin: board\n---\n\n## Todo\n\n- [ ] Call mom @{2026-10-21} @@{13:00}\n- [ ] Pay bills @{2026-10-16}\n\n" +
+            "## Done\n\n**Complete**\n- [x] Old\n\n***\n\n## Archive\n\n- [x] Older\n"
+        assertEquals("Todo 2 · Done 1\nCall mom · Pay bills", KanbanFormat.preview(board))
     }
 
     @Test
@@ -120,5 +121,56 @@ class KanbanFormatTest {
 
         val renamed = card.withTitle("Врач")
         assertEquals("Врач @{2026-10-15} @@{09:00}", renamed.text)
+    }
+
+    @Test
+    fun archiveRoundTripsAndStaysOutOfLanes() {
+        val withArchive = """
+            ---
+
+            kanban-plugin: board
+
+            ---
+
+            ## Todo
+
+            - [ ] Task one
+
+
+            ## Done
+
+            **Complete**
+            - [x] Finished
+
+
+            ***
+
+            ## Архив
+
+            - [x] Old card
+            	with notes
+            - [ ] Dropped idea
+
+            %% kanban:settings
+            ```
+            {"kanban-plugin":"board"}
+            ```
+            %%
+        """.trimIndent() + "\n"
+        val board = KanbanFormat.parse(withArchive)
+        assertEquals(listOf("Todo", "Done"), board.lanes.map { it.title })
+        assertEquals(listOf("Old card", "Dropped idea"), board.archived.map { it.title })
+        assertEquals(listOf("\twith notes"), board.archived[0].continuation)
+        assertEquals("Архив", board.archive?.title)
+        assertTrue(board.tail.startsWith("%% kanban:settings"))
+        assertEquals(withArchive, KanbanFormat.serialize(board))
+
+        // Archiving into a board without an archive adds the plugin's block; emptying it removes the block.
+        val plain = KanbanFormat.parse(KanbanFormat.serialize(KanbanBoard.default().addCard(0, KanbanCard.create("A"))))
+        val archived = KanbanFormat.serialize(plain.archiveCard(CardRef(0, 0, "A")))
+        assertTrue(archived.contains("\n\n***\n\n## Archive\n\n- [ ] A\n\n%% kanban:settings"))
+        val reparsed = KanbanFormat.parse(archived)
+        assertEquals(listOf("A"), reparsed.archived.map { it.text })
+        assertFalse(KanbanFormat.serialize(reparsed.deleteArchived(0, "A")).contains("***"))
     }
 }

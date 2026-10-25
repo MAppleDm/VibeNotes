@@ -44,6 +44,7 @@ fun ActionProposal.toolCall(): Pair<String, String> = when (this) {
         }
         if (after.dueTime != before.dueTime) after.dueTime?.let { put("due_time", it) }
         if (after.done != before.done) put("done", after.done)
+        if (after.lane != before.lane) put("move_to_column", after.lane)
     }.toString()
     is ActionProposal.CreateNote -> "create_note" to buildJsonObject {
         put("title", title)

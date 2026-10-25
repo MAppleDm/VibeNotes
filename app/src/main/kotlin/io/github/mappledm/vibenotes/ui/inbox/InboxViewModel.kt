@@ -43,7 +43,9 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
         .map { index ->
             index.boards.mapNotNull { meta ->
                 val content = vault.notes.cachedContent(meta.path) ?: return@mapNotNull null
-                BoardInfo(meta.path, meta.title, KanbanFormat.parse(content).lanes.map { it.title })
+                KanbanFormat.parse(content).lanes.let { lanes ->
+                    BoardInfo(meta.path, meta.title, lanes.map { it.title }, lanes.filter { it.isComplete }.map { it.title })
+                }
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
