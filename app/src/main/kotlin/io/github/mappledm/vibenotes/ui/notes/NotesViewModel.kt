@@ -4,23 +4,28 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
 import io.github.mappledm.vibenotes.core.notes.NoteMeta
-import io.github.mappledm.vibenotes.core.notes.VaultIndex
+import io.github.mappledm.vibenotes.core.notes.NoteTimeline
 import io.github.mappledm.vibenotes.core.notes.SearchHit
+import io.github.mappledm.vibenotes.core.notes.TimeGroup
+import io.github.mappledm.vibenotes.core.notes.TimeScale
 import io.github.mappledm.vibenotes.core.storage.VaultPaths
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class NotesUiState(
     val folder: String = "",
     val subfolders: List<String> = emptyList(),
-    val notes: List<NoteMeta> = emptyList(),
+    /** Every note under the folder (subfolders included), grouped by when it last changed. */
+    val groups: List<TimeGroup<NoteMeta>> = emptyList(),
+    val scale: TimeScale = TimeScale.WEEK,
+    val oldestFirst: Boolean = false,
     val pinned: List<NoteMeta> = emptyList(),
     val query: String = "",
     val results: List<SearchHit> = emptyList(),
@@ -28,15 +33,19 @@ data class NotesUiState(
     val allFolders: List<String> = emptyList(),
     val pinnedPaths: Set<String> = emptySet(),
     val hiddenFolders: Set<String> = emptySet(),
-    /** Note path → AI-written preview, shown instead of [NoteMeta.preview]. */
+    /** Note path → AI-written preview (gist on the first line, then facts), shown instead of [NoteMeta.preview]. */
     val aiPreviews: Map<String, String> = emptyMap(),
-)
+) {
+    val isEmpty: Boolean get() = groups.isEmpty() && pinned.isEmpty() && subfolders.isEmpty()
+}
 
 class NotesViewModel(private val container: AppContainer, private val folder: String) : ViewModel() {
     private val vault = container.requireVault()
     private val notes = vault.notes
     private val previews = vault.previews
     private val query = MutableStateFlow("")
+    /** Notes on screen right now: only these are sent for AI previews. */
+    private var visible: List<String> = emptyList()
 
     private val _message = MutableStateFlow<UndoMessage?>(null)
     val message: StateFlow<UndoMessage?> = _message.asStateFlow()
@@ -44,14 +53,18 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
     data class UndoMessage(val text: String, val trashPath: String? = null, val originalPath: String? = null)
 
     val state: StateFlow<NotesUiState> = combine(notes.index, query, container.settings.state, previews.entries) { index, q, settings, ai ->
-        val inFolder = index.notes.filter { it.folder == folder }
-        val subfolders = index.folders.filter { VaultPaths.parent(it) == folder }
+        val prefix = if (folder.isEmpty()) "" else "$folder/"
         val pinned = if (folder.isEmpty()) index.notes.filter { it.path in settings.pinned } else emptyList()
-        val shown = pinned + inFolder
+        // Pinned notes live in their own section at the top, not a second time in the timeline.
+        val pinnedPaths = pinned.map { it.path }.toSet()
+        val underFolder = index.notes.filter { it.path.startsWith(prefix) && it.path !in pinnedPaths }
+        val shown = pinned + underFolder
         NotesUiState(
             folder = folder,
-            subfolders = subfolders.sortedBy { it.lowercase() },
-            notes = inFolder.sortedWith(compareByDescending<NoteMeta> { it.path in settings.pinned }.thenByDescending { it.lastModified }),
+            subfolders = index.folders.filter { VaultPaths.parent(it) == folder }.sortedBy { it.lowercase() },
+            groups = NoteTimeline.group(underFolder, settings.notesScale, newestFirst = !settings.notesOldestFirst),
+            scale = settings.notesScale,
+            oldestFirst = settings.notesOldestFirst,
             pinned = pinned,
             query = q,
             results = if (q.isBlank()) emptyList() else notes.search(q),
@@ -64,22 +77,25 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
     }.flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NotesUiState(folder = folder))
 
-    /** Re-reads the folder, then asks for AI previews of new and edited notes on screen. */
+    /** Re-reads the vault, then asks for AI previews of new and edited notes on screen. */
     fun refresh() {
         viewModelScope.launch {
             runCatching { notes.refresh() }
-                .onSuccess { previews.request(shownPaths(it)) }
+                .onSuccess { previews.request(visible) }
                 .onFailure { show(it.message ?: "Не удалось обновить список") }
         }
     }
 
-    private fun shownPaths(index: VaultIndex): List<String> {
-        val pinned = container.settings.current.pinned
-        return index.notes
-            .filter { it.folder == folder || (folder.isEmpty() && it.path in pinned) }
-            .sortedByDescending { it.lastModified }
-            .map { it.path }
+    /** The list scrolled: previews are made for what is on screen, not for the whole vault at once. */
+    fun setVisible(paths: List<String>) {
+        if (paths == visible) return
+        visible = paths
+        previews.request(paths)
     }
+
+    fun setScale(scale: TimeScale) = container.settings.setNotesScale(scale)
+
+    fun setOldestFirst(value: Boolean) = container.settings.setNotesOldestFirst(value)
 
     fun setQuery(value: String) {
         query.value = value
@@ -141,8 +157,8 @@ class NotesViewModel(private val container: AppContainer, private val folder: St
         viewModelScope.launch { runCatching { notes.restore(trash, original) }.onFailure { show(it.message ?: "Не удалось восстановить") } }
     }
 
-    fun messageShown() {
-        _message.value = null
+    fun messageShown(message: UndoMessage) {
+        if (_message.value === message) _message.value = null
     }
 
     private fun show(text: String) {

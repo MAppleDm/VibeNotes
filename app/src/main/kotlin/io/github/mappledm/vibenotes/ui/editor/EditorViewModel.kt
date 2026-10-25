@@ -69,8 +69,8 @@ class EditorViewModel(
     var notice by mutableStateOf<String?>(null)
         private set
 
-    fun noticeShown() {
-        notice = null
+    fun noticeShown(shown: String) {
+        if (notice == shown) notice = null
     }
 
     fun toggleHiddenFromAi() {

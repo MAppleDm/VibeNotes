@@ -131,7 +131,8 @@ fun ProposalCard(
                 }
                 is ActionProposal.UpdateTask -> {
                     Text(p.after.title, style = MaterialTheme.typography.titleMedium, color = contentColor)
-                    Detail("Доска «${VaultPaths.baseName(p.after.boardPath)}» → ${p.after.lane}")
+                    Detail("Доска «${VaultPaths.baseName(p.after.boardPath)}» · ${p.before.lane}")
+                    if (p.before.lane != p.after.lane) Detail("Статус: ${p.before.lane} → ${p.after.lane}")
                     if (p.before.title != p.after.title) Detail("Название: ${p.before.title} → ${p.after.title}")
                     if (p.before.dueDate != p.after.dueDate || p.before.dueTime != p.after.dueTime) {
                         Detail("Срок: ${taskDue(p.before)} → ${taskDue(p.after)}")

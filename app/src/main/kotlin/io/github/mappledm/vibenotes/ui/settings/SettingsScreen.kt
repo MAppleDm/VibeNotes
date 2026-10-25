@@ -130,8 +130,12 @@ fun SettingsScreen(
 
     LaunchedEffect(vm.notice) {
         vm.notice?.let {
-            vm.noticeShown()
-            snackbar.showSnackbar(it)
+            // Cleared after showing: clearing first would change the key and cancel the snackbar.
+            try {
+                snackbar.showSnackbar(it)
+            } finally {
+                vm.noticeShown(it)
+            }
         }
     }
 

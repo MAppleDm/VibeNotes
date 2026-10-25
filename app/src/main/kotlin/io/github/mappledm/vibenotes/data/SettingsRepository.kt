@@ -3,6 +3,7 @@ package io.github.mappledm.vibenotes.data
 import android.content.Context
 import android.content.SharedPreferences
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
+import io.github.mappledm.vibenotes.core.notes.TimeScale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -77,6 +78,12 @@ data class AppSettings(
     val taskReminderMinute: Int = 0,
     /** AI-written descriptions instead of the first lines in the note list. */
     val aiPreviews: Boolean = true,
+    // --- how the lists look ---
+    /** The calendar tab shows a month grid instead of the week overview. */
+    val calendarMonth: Boolean = false,
+    /** How the note list is grouped by time. */
+    val notesScale: TimeScale = TimeScale.WEEK,
+    val notesOldestFirst: Boolean = false,
 )
 
 /** Small key-value settings; SharedPreferences is enough and has no extra dependencies. */
@@ -115,6 +122,9 @@ class SettingsRepository(context: Context) {
         taskReminderHour = prefs.getInt(KEY_TASK_REMINDER_HOUR, 10).coerceIn(0, 23),
         taskReminderMinute = prefs.getInt(KEY_TASK_REMINDER_MINUTE, 0).coerceIn(0, 59),
         aiPreviews = prefs.getBoolean(KEY_AI_PREVIEWS, true),
+        calendarMonth = prefs.getBoolean(KEY_CALENDAR_MONTH, false),
+        notesScale = runCatching { TimeScale.valueOf(prefs.getString(KEY_NOTES_SCALE, null) ?: "WEEK") }.getOrDefault(TimeScale.WEEK),
+        notesOldestFirst = prefs.getBoolean(KEY_NOTES_OLDEST_FIRST, false),
     )
 
     private fun edit(block: SharedPreferences.Editor.() -> Unit) {
@@ -161,6 +171,9 @@ class SettingsRepository(context: Context) {
     }
     fun setUseInstructions(value: Boolean) = edit { putBoolean(KEY_USE_INSTRUCTIONS, value) }
     fun setAiPreviews(value: Boolean) = edit { putBoolean(KEY_AI_PREVIEWS, value) }
+    fun setCalendarMonth(value: Boolean) = edit { putBoolean(KEY_CALENDAR_MONTH, value) }
+    fun setNotesScale(value: TimeScale) = edit { putString(KEY_NOTES_SCALE, value.name) }
+    fun setNotesOldestFirst(value: Boolean) = edit { putBoolean(KEY_NOTES_OLDEST_FIRST, value) }
     fun setAutoUpdateCheck(value: Boolean) = edit { putBoolean(KEY_AUTO_UPDATE, value) }
     fun setLastUpdateCheck(millis: Long) = edit { putLong(KEY_LAST_UPDATE_CHECK, millis) }
     fun setDismissedUpdate(versionCode: Long) = edit { putLong(KEY_DISMISSED_UPDATE, versionCode) }
@@ -191,6 +204,9 @@ class SettingsRepository(context: Context) {
         private const val KEY_USE_INSTRUCTIONS = "ai_use_instructions"
         private const val KEY_INSTRUCTIONS_FILE = "ai_instructions_file"
         private const val KEY_AI_PREVIEWS = "ai_note_previews"
+        private const val KEY_CALENDAR_MONTH = "calendar_month"
+        private const val KEY_NOTES_SCALE = "notes_scale"
+        private const val KEY_NOTES_OLDEST_FIRST = "notes_oldest_first"
         private const val KEY_CHAT_CLEARED = "chat_cleared_day"
         private const val KEY_TASK_REMINDER = "task_reminder"
         private const val KEY_TASK_REMINDER_DAY = "task_reminder_day"

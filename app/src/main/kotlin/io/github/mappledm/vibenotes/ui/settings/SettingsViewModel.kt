@@ -223,8 +223,8 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun noticeShown() {
-        notice = null
+    fun noticeShown(shown: String) {
+        if (notice == shown) notice = null
     }
 
     val appVersion: String = container.updater.currentVersionName

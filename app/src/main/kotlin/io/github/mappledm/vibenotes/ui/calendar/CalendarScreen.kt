@@ -1,4 +1,4 @@
-package io.github.mappledm.vibenotes.ui.week
+package io.github.mappledm.vibenotes.ui.calendar
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,8 +33,9 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.CalendarViewMonth
+import androidx.compose.material.icons.outlined.CalendarViewWeek
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Today
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -44,6 +45,9 @@ import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -57,12 +61,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mappledm.vibenotes.core.calendar.CalendarEvent
@@ -74,98 +83,167 @@ import io.github.mappledm.vibenotes.ui.components.containerFactory
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.temporal.ChronoUnit
 
 /**
- * An overview of the week, not a second calendar app: what is planned, by day, plus what is
- * overdue. Planning goes through the Inbox ("+" types the day there), details and editing
- * open in the system Calendar.
+ * What is planned, by week or by month — an overview, not a second calendar app.
+ * The month view is a wall calendar like Google Calendar's, with the chosen day's plans under it.
+ * Planning goes through the Inbox ("+" types the day there), details and editing open in the system Calendar.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun WeekScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, onOpenInbox: () -> Unit) {
-    val vm: WeekViewModel = viewModel(factory = containerFactory { WeekViewModel(it) })
+fun CalendarScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, onOpenInbox: () -> Unit) {
+    val vm: CalendarViewModel = viewModel(factory = containerFactory { CalendarViewModel(it) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refresh() }
     val today = LocalDate.now()
-    val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    val rows = remember(state, today) { weekRows(state, today) }
 
-    fun openCalendar(millis: Long) {
+    fun openCalendar(date: LocalDate) {
+        val millis = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         runCatching { context.startActivity(AndroidCalendarGateway.viewTimeIntent(millis)) }
     }
 
-    OnResume { vm.refresh() }
+    val actions = DayActions(
+        onPlan = { date -> vm.planFor(date); onOpenInbox() },
+        onOpenEvent = { event -> runCatching { context.startActivity(AndroidCalendarGateway.viewTimeIntent(event.start.toEpochMilli())) } },
+        onCheck = vm::complete,
+        onOpenBoard = onOpenBoard,
+        onAllowCalendar = { permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS) },
+        onOpenCalendar = ::openCalendar,
+    )
 
-    // The current week opens at today (or at what is overdue, right above it); other weeks at the top.
-    LaunchedEffect(state.loadedWeek) {
-        val week = state.loadedWeek ?: return@LaunchedEffect
-        val target = if (today in week..week.plusDays(6)) {
-            rows.indexOfFirst { it is WeekRow.Overdue || (it is WeekRow.Day && it.day.date == today) }
-        } else 0
-        listState.scrollToItem(target.coerceAtLeast(0))
-    }
+    OnResume { vm.refresh() }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text(weekTitle(state.weekStart), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(title(state, today), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            weekSubtitle(state.weekStart, today),
+                            subtitle(state, today),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 },
                 actions = {
-                    if (today !in state.weekStart..state.weekStart.plusDays(6)) {
-                        IconButton(onClick = vm::today) { Icon(Icons.Outlined.Today, "Эта неделя") }
+                    val week = state.mode == CalendarMode.WEEK
+                    TodayButton(today, onClick = vm::today)
+                    IconButton(onClick = { vm.shift(-1) }) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, if (week) "Предыдущая неделя" else "Предыдущий месяц")
                     }
-                    IconButton(onClick = { vm.shiftWeek(-1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Предыдущая неделя") }
-                    IconButton(onClick = { vm.shiftWeek(1) }) { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Следующая неделя") }
+                    IconButton(onClick = { vm.shift(1) }) {
+                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, if (week) "Следующая неделя" else "Следующий месяц")
+                    }
                     IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, "Настройки") }
                 },
             )
         },
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
-            WeekStrip(state, today) { date ->
-                val index = rows.indexOfFirst { it is WeekRow.Day && it.day.date == date }
-                if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+            ModeSwitch(state.mode, vm::setMode)
+            when (state.mode) {
+                CalendarMode.WEEK -> WeekView(state, today, actions)
+                CalendarMode.MONTH -> MonthView(state, today, actions, onSelect = vm::select)
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                state = listState,
-                // Top padding equals the item spacing, so a day scrolled to the top hides the one above it.
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(rows, key = { it.key }) { row ->
-                    when (row) {
-                        WeekRow.Permission -> PermissionCard { permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS) }
-                        is WeekRow.Error -> Text(row.text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                        is WeekRow.Overdue -> OverdueCard(row.tasks, onCheck = vm::complete, onOpenBoard = onOpenBoard)
-                        is WeekRow.Day -> DayBlock(
-                            day = row.day,
-                            today = today,
-                            onPlan = {
-                                vm.planFor(row.day.date)
-                                onOpenInbox()
-                            },
-                            onOpenEvent = { openCalendar(it.start.toEpochMilli()) },
-                            onCheck = vm::complete,
-                            onOpenBoard = onOpenBoard,
-                        )
-                        is WeekRow.Footer -> Footer(row.weekIsEmpty) {
-                            val day = if (today in state.weekStart..state.weekStart.plusDays(6)) today else state.weekStart
-                            openCalendar(day.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli())
-                        }
+        }
+    }
+}
+
+/** Everything a day can do, shared by the week and the month view. */
+private class DayActions(
+    val onPlan: (LocalDate) -> Unit,
+    val onOpenEvent: (CalendarEvent) -> Unit,
+    val onCheck: (TaskItem) -> Unit,
+    val onOpenBoard: (String) -> Unit,
+    val onAllowCalendar: () -> Unit,
+    val onOpenCalendar: (LocalDate) -> Unit,
+)
+
+/** Google Calendar's "today" button: a small page with today's date on it. */
+@Composable
+private fun TodayButton(today: LocalDate, onClick: () -> Unit) {
+    IconButton(onClick = onClick) {
+        val color = MaterialTheme.colorScheme.onSurfaceVariant
+        Box(
+            Modifier
+                .size(22.dp)
+                .border(1.5.dp, color, RoundedCornerShape(5.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                today.dayOfMonth.toString(),
+                style = TextStyle(fontSize = 11.sp, lineHeight = 11.sp, fontWeight = FontWeight.Bold),
+                color = color,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModeSwitch(mode: CalendarMode, onMode: (CalendarMode) -> Unit) {
+    val options = listOf(
+        Triple(CalendarMode.WEEK, "Неделя", Icons.Outlined.CalendarViewWeek),
+        Triple(CalendarMode.MONTH, "Месяц", Icons.Outlined.CalendarViewMonth),
+    )
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        options.forEachIndexed { index, (value, label, icon) ->
+            SegmentedButton(
+                selected = mode == value,
+                onClick = { onMode(value) },
+                shape = SegmentedButtonDefaults.itemShape(index, options.size),
+                icon = { SegmentedButtonDefaults.Icon(mode == value) { Icon(icon, null, Modifier.size(18.dp)) } },
+                label = { Text(label) },
+            )
+        }
+    }
+}
+
+// --- week -----------------------------------------------------------------------------------
+
+@Composable
+private fun WeekView(state: CalendarUiState, today: LocalDate, actions: DayActions) {
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val rows = remember(state, today) { weekRows(state, today) }
+
+    // The current week opens at today (or at what is overdue, right above it); other weeks at the top.
+    LaunchedEffect(state.loaded) {
+        val week = state.loaded?.takeIf { it.mode == CalendarMode.WEEK } ?: return@LaunchedEffect
+        val target = if (today in week) {
+            rows.indexOfFirst { it is WeekRow.Overdue || (it is WeekRow.Day && it.day.date == today) }
+        } else 0
+        listState.scrollToItem(target.coerceAtLeast(0))
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        WeekStrip(state, today) { date ->
+            val index = rows.indexOfFirst { it is WeekRow.Day && it.day.date == date }
+            if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            state = listState,
+            // Top padding equals the item spacing, so a day scrolled to the top hides the one above it.
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(rows, key = { it.key }) { row ->
+                when (row) {
+                    WeekRow.Permission -> PermissionCard(actions.onAllowCalendar)
+                    is WeekRow.Error -> ErrorText(row.text)
+                    is WeekRow.Overdue -> OverdueCard(row.tasks, actions)
+                    is WeekRow.Day -> DayBlock(row.day, today, actions)
+                    is WeekRow.Footer -> Footer(
+                        emptyHint = if (row.weekIsEmpty) "Неделя свободна. Напишите во «Входящие», например «в четверг в 15:00 стоматолог», — и событие появится здесь." else null,
+                    ) {
+                        actions.onOpenCalendar(if (today in state.range) today else state.weekStart)
                     }
                 }
             }
@@ -198,23 +276,22 @@ private sealed interface WeekRow {
 }
 
 /** Past days, then what is still overdue, then today and the rest: the list reads in time order. */
-private fun weekRows(state: WeekUiState, today: LocalDate): List<WeekRow> = buildList {
-    if (state.loading) return@buildList
+private fun weekRows(state: CalendarUiState, today: LocalDate): List<WeekRow> = buildList {
+    if (state.loading || state.loaded != state.range) return@buildList
     if (!state.calendarAllowed) add(WeekRow.Permission)
     state.calendarError?.let { add(WeekRow.Error(it)) }
+    val overdue = if (today in state.range) state.overdue else emptyList()
     val (past, rest) = state.days.partition { it.date.isBefore(today) }
     past.forEach { add(WeekRow.Day(it)) }
-    if (state.overdue.isNotEmpty()) add(WeekRow.Overdue(state.overdue))
+    if (overdue.isNotEmpty()) add(WeekRow.Overdue(overdue))
     rest.forEach { add(WeekRow.Day(it)) }
-    add(WeekRow.Footer(weekIsEmpty = state.overdue.isEmpty() && state.days.all { it.isEmpty }))
+    add(WeekRow.Footer(weekIsEmpty = overdue.isEmpty() && state.days.all { it.isEmpty }))
 }
-
-// --- week strip ---------------------------------------------------------------------------
 
 /** Seven days at a glance; a dot per calendar colour and a ring for tasks. Tap to jump to the day. */
 @Composable
-private fun WeekStrip(state: WeekUiState, today: LocalDate, onDay: (LocalDate) -> Unit) {
-    val byDate = state.days.associateBy { it.date }
+private fun WeekStrip(state: CalendarUiState, today: LocalDate, onDay: (LocalDate) -> Unit) {
+    val byDate = if (state.loaded == state.range) state.days.associateBy { it.date } else emptyMap()
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
         for (offset in 0L until 7L) {
             val date = state.weekStart.plusDays(offset)
@@ -234,24 +311,30 @@ private fun WeekStrip(state: WeekUiState, today: LocalDate, onDay: (LocalDate) -
                     color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
-                Box(
-                    Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(if (isToday) MaterialTheme.colorScheme.primaryContainer else Color.Transparent),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        date.dayOfMonth.toString(),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (isToday) FontWeight.Bold else FontWeight.Medium,
-                        color = if (isToday) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                    )
-                }
+                DayNumber(date, isToday, size = 34)
                 Spacer(Modifier.height(4.dp))
                 DayDots(byDate[date])
             }
         }
+    }
+}
+
+@Composable
+private fun DayNumber(date: LocalDate, isToday: Boolean, size: Int, selected: Boolean = false) {
+    Box(
+        Modifier
+            .size(size.dp)
+            .clip(CircleShape)
+            .background(if (isToday) MaterialTheme.colorScheme.primaryContainer else Color.Transparent)
+            .then(if (selected && !isToday) Modifier.border(1.5.dp, MaterialTheme.colorScheme.onSurface, CircleShape) else Modifier),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            date.dayOfMonth.toString(),
+            style = if (size >= 30) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelLarge,
+            fontWeight = if (isToday || selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (isToday) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
@@ -271,23 +354,161 @@ private fun DayDots(day: DayAgenda?) {
     }
 }
 
-// --- days ---------------------------------------------------------------------------------
+// --- month ----------------------------------------------------------------------------------
+
+/** A wall calendar: whole weeks around the month, chips for what is planned, the chosen day's plans below. */
+@Composable
+private fun MonthView(state: CalendarUiState, today: LocalDate, actions: DayActions, onSelect: (LocalDate) -> Unit) {
+    val loaded = state.loaded == state.range
+    val selectedDay = state.days.firstOrNull { it.date == state.selected }.takeIf { loaded }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item(key = "grid") { MonthGrid(state, today, onSelect) }
+        if (loaded && !state.calendarAllowed) {
+            item(key = "permission") { Box(Modifier.padding(horizontal = 16.dp)) { PermissionCard(actions.onAllowCalendar) } }
+        }
+        state.calendarError?.let { item(key = "error") { Box(Modifier.padding(horizontal = 16.dp)) { ErrorText(it) } } }
+        if (loaded && state.selected == today && state.overdue.isNotEmpty()) {
+            item(key = "overdue") { Box(Modifier.padding(horizontal = 16.dp)) { OverdueCard(state.overdue, actions) } }
+        }
+        selectedDay?.let { day ->
+            item(key = "day:${day.date}") { Box(Modifier.padding(horizontal = 16.dp)) { DayBlock(day, today, actions, compactWhenFree = false) } }
+        }
+        item(key = "footer") { Footer(emptyHint = null) { actions.onOpenCalendar(state.selected) } }
+    }
+}
+
+@Composable
+private fun MonthGrid(state: CalendarUiState, today: LocalDate, onSelect: (LocalDate) -> Unit) {
+    val range = state.range
+    val byDate = if (state.loaded == range) state.days.associateBy { it.date } else emptyMap()
+    val line = MaterialTheme.colorScheme.outlineVariant
+    Column(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+            for (offset in 0L until 7L) {
+                Text(
+                    Dates.weekdayShort(range.start.plusDays(offset)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+        for (week in 0 until range.days / 7) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(MONTH_CELL_HEIGHT)
+                    .drawBehind { drawLine(line, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) },
+            ) {
+                for (weekday in 0 until 7) {
+                    val date = range.start.plusDays(week * 7L + weekday)
+                    MonthCell(
+                        date = date,
+                        day = byDate[date],
+                        inMonth = YearMonth.from(date) == state.month,
+                        isToday = date == today,
+                        selected = date == state.selected,
+                        past = date.isBefore(today),
+                        onClick = { onSelect(date) },
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** One thing in a month cell: an event in its calendar's colour or an outlined task. */
+private data class CellEntry(val title: String, val color: Color?, val isTask: Boolean)
+
+@Composable
+private fun MonthCell(
+    date: LocalDate,
+    day: DayAgenda?,
+    inMonth: Boolean,
+    isToday: Boolean,
+    selected: Boolean,
+    past: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier,
+) {
+    val primary = MaterialTheme.colorScheme.primary
+    val entries = day?.let { d ->
+        d.allDay.map { CellEntry(it.title, it.color?.let { c -> Color(c) } ?: primary, isTask = false) } +
+            d.timed.map { entry ->
+                when (entry) {
+                    is TimedEntry.Event -> CellEntry(entry.event.title, entry.event.color?.let { c -> Color(c) } ?: primary, isTask = false)
+                    is TimedEntry.Task -> CellEntry(entry.task.card.title, null, isTask = true)
+                }
+            } +
+            d.tasks.map { CellEntry(it.card.title, null, isTask = true) }
+    }.orEmpty()
+    // Three lines fit: all three entries, or two and "+N".
+    val shown = if (entries.size > MONTH_CELL_LINES) entries.take(MONTH_CELL_LINES - 1) else entries
+    Column(
+        modifier
+            .padding(1.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (selected) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
+            .clickable(onClick = onClick)
+            .alpha(if (!inMonth) OTHER_MONTH_ALPHA else if (past) PAST_ALPHA else 1f)
+            .padding(horizontal = 2.dp, vertical = 3.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        DayNumber(date, isToday, size = 24, selected = selected)
+        Spacer(Modifier.height(2.dp))
+        shown.forEach { CellChip(it) }
+        if (entries.size > shown.size) {
+            Text(
+                "+${entries.size - shown.size}",
+                style = TextStyle(fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(start = 2.dp, top = 1.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CellChip(entry: CellEntry) {
+    val shape = RoundedCornerShape(3.dp)
+    val chip = Modifier.fillMaxWidth().padding(top = 1.dp).height(13.dp).clip(shape)
+    val background = entry.color
+    Text(
+        entry.title,
+        style = TextStyle(fontSize = 10.sp, lineHeight = 13.sp, fontWeight = FontWeight.Medium),
+        color = when {
+            background == null -> MaterialTheme.colorScheme.onSurface
+            background.luminance() > 0.45f -> Color.Black
+            else -> Color.White
+        },
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
+        modifier = if (background != null) {
+            chip.background(background).padding(horizontal = 3.dp)
+        } else {
+            chip.border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant, shape).padding(horizontal = 3.dp)
+        },
+    )
+}
+
+// --- days -----------------------------------------------------------------------------------
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun DayBlock(
-    day: DayAgenda,
-    today: LocalDate,
-    onPlan: () -> Unit,
-    onOpenEvent: (CalendarEvent) -> Unit,
-    onCheck: (TaskItem) -> Unit,
-    onOpenBoard: (String) -> Unit,
-) {
+private fun DayBlock(day: DayAgenda, today: LocalDate, actions: DayActions, compactWhenFree: Boolean = true) {
     val isToday = day.date == today
     val past = day.date.isBefore(today)
+    val onPlan = { actions.onPlan(day.date) }.takeUnless { past }
     // A free day is a single line, so a quiet week stays short and still shows every day.
-    if (day.isEmpty && !isToday) {
-        DayHeader(day.date, isToday = false, note = "свободно", onPlan = onPlan.takeUnless { past }, modifier = Modifier.alpha(if (past) PAST_ALPHA else 1f))
+    if (day.isEmpty && !isToday && compactWhenFree) {
+        DayHeader(day.date, isToday = false, note = "свободно", onPlan = onPlan, modifier = Modifier.alpha(if (past) PAST_ALPHA else 1f))
         return
     }
     val shape = RoundedCornerShape(12.dp)
@@ -303,10 +524,10 @@ private fun DayBlock(
             )
             .padding(bottom = 8.dp),
     ) {
-        DayHeader(day.date, isToday, note = null, onPlan = onPlan.takeUnless { past })
+        DayHeader(day.date, isToday, note = null, onPlan = onPlan)
         if (day.isEmpty) {
             Text(
-                "Свободный день. Нажмите +, чтобы записать план во «Входящие».",
+                if (past) "Ничего не было запланировано." else "Свободный день. Нажмите +, чтобы записать план во «Входящие».",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
@@ -318,18 +539,18 @@ private fun DayBlock(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                day.allDay.forEach { AllDayChip(it) { onOpenEvent(it) } }
+                day.allDay.forEach { AllDayChip(it) { actions.onOpenEvent(it) } }
             }
         }
         val now = Instant.now()
         day.timed.forEach { entry ->
             when (entry) {
-                is TimedEntry.Event -> EventEntry(entry, now, dimFinished = isToday) { onOpenEvent(entry.event) }
-                is TimedEntry.Task -> TaskEntry(entry.task, Dates.timeOf(entry.time), onCheck = { onCheck(entry.task) }, onOpen = { onOpenBoard(entry.task.boardPath) })
+                is TimedEntry.Event -> EventEntry(entry, now, dimFinished = isToday) { actions.onOpenEvent(entry.event) }
+                is TimedEntry.Task -> TaskEntry(entry.task, Dates.timeOf(entry.time), onCheck = { actions.onCheck(entry.task) }, onOpen = { actions.onOpenBoard(entry.task.boardPath) })
             }
         }
         day.tasks.forEach { task ->
-            TaskEntry(task, null, onCheck = { onCheck(task) }, onOpen = { onOpenBoard(task.boardPath) })
+            TaskEntry(task, null, onCheck = { actions.onCheck(task) }, onOpen = { actions.onOpenBoard(task.boardPath) })
         }
     }
 }
@@ -469,10 +690,10 @@ private fun TimeLabel(top: String, bottom: String?, color: Color = MaterialTheme
     }
 }
 
-// --- the rest -----------------------------------------------------------------------------
+// --- the rest -------------------------------------------------------------------------------
 
 @Composable
-private fun OverdueCard(tasks: List<TaskItem>, onCheck: (TaskItem) -> Unit, onOpenBoard: (String) -> Unit) {
+private fun OverdueCard(tasks: List<TaskItem>, actions: DayActions) {
     val shape = RoundedCornerShape(12.dp)
     Column(
         Modifier
@@ -491,8 +712,8 @@ private fun OverdueCard(tasks: List<TaskItem>, onCheck: (TaskItem) -> Unit, onOp
             TaskEntry(
                 task,
                 time = task.card.dueDate?.let { Dates.dayMonth(it) },
-                onCheck = { onCheck(task) },
-                onOpen = { onOpenBoard(task.boardPath) },
+                onCheck = { actions.onCheck(task) },
+                onOpen = { actions.onOpenBoard(task.boardPath) },
                 timeColor = MaterialTheme.colorScheme.error,
             )
         }
@@ -510,11 +731,16 @@ private fun PermissionCard(onAllow: () -> Unit) {
 }
 
 @Composable
-private fun Footer(weekIsEmpty: Boolean, onOpenCalendar: () -> Unit) {
+private fun ErrorText(text: String) {
+    Text(text, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+}
+
+@Composable
+private fun Footer(emptyHint: String?, onOpenCalendar: () -> Unit) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        if (weekIsEmpty) {
+        emptyHint?.let {
             Text(
-                "Неделя свободна. Напишите во «Входящие», например «в четверг в 15:00 стоматолог», — и событие появится здесь.",
+                it,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -532,6 +758,12 @@ private fun Footer(weekIsEmpty: Boolean, onOpenCalendar: () -> Unit) {
 @Composable
 private fun eventColor(event: CalendarEvent): Color = event.color?.let { Color(it) } ?: MaterialTheme.colorScheme.primary
 
+private fun title(state: CalendarUiState, today: LocalDate): String =
+    if (state.mode == CalendarMode.WEEK) weekTitle(state.weekStart) else Dates.monthYear(state.month.atDay(1), today)
+
+private fun subtitle(state: CalendarUiState, today: LocalDate): String =
+    if (state.mode == CalendarMode.WEEK) weekSubtitle(state.weekStart, today) else monthSubtitle(state.month, today)
+
 /** "19–25 октября" or "29 сент – 5 окт". */
 private fun weekTitle(start: LocalDate): String {
     val end = start.plusDays(6)
@@ -541,25 +773,40 @@ private fun weekTitle(start: LocalDate): String {
 
 /** "эта неделя", "через 3 недели", "прошлая неделя · 2025". */
 private fun weekSubtitle(start: LocalDate, today: LocalDate): String {
-    val weeks = ChronoUnit.WEEKS.between(today.minusDays((today.dayOfWeek.value - 1).toLong()), start)
+    val weeks = ChronoUnit.WEEKS.between(CalendarRange.mondayOf(today), start)
     val relative = when {
         weeks == 0L -> "эта неделя"
         weeks == 1L -> "следующая неделя"
         weeks == -1L -> "прошлая неделя"
-        weeks > 0 -> "через $weeks ${weeksWord(weeks)}"
-        else -> "${-weeks} ${weeksWord(-weeks)} назад"
+        weeks > 0 -> "через $weeks ${plural(weeks, "неделю", "недели", "недель")}"
+        else -> "${-weeks} ${plural(-weeks, "неделю", "недели", "недель")} назад"
     }
     val end = start.plusDays(6)
     return if (end.year != today.year || start.year != today.year) "$relative · ${end.year}" else relative
 }
 
-private fun weeksWord(n: Long): String = when {
-    n % 10 == 1L && n % 100 != 11L -> "неделю"
-    n % 10 in 2L..4L && n % 100 !in 12L..14L -> "недели"
-    else -> "недель"
+/** "этот месяц", "через 2 месяца", "5 месяцев назад". */
+private fun monthSubtitle(month: YearMonth, today: LocalDate): String {
+    val months = ChronoUnit.MONTHS.between(YearMonth.from(today), month)
+    return when {
+        months == 0L -> "этот месяц"
+        months == 1L -> "следующий месяц"
+        months == -1L -> "прошлый месяц"
+        months > 0 -> "через $months ${plural(months, "месяц", "месяца", "месяцев")}"
+        else -> "${-months} ${plural(-months, "месяц", "месяца", "месяцев")} назад"
+    }
+}
+
+private fun plural(n: Long, one: String, few: String, many: String): String = when {
+    n % 10 == 1L && n % 100 != 11L -> one
+    n % 10 in 2L..4L && n % 100 !in 12L..14L -> few
+    else -> many
 }
 
 private const val PAST_ALPHA = 0.6f
 private const val FINISHED_ALPHA = 0.55f
+private const val OTHER_MONTH_ALPHA = 0.4f
+private const val MONTH_CELL_LINES = 3
+private val MONTH_CELL_HEIGHT = 76.dp
 private val TIME_WIDTH = 46.dp
 private val MARKER_WIDTH = 32.dp

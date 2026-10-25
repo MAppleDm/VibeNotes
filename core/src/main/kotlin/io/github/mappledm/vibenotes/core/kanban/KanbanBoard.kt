@@ -80,7 +80,14 @@ data class KanbanBoard(
     val frontmatter: String = KanbanFormat.DEFAULT_FRONTMATTER,
     val preamble: String = "\n",
     val tail: String = KanbanFormat.DEFAULT_SETTINGS,
+    /** Cards taken off the board but kept (the plugin's "Archive"); not tasks anymore. */
+    val archive: KanbanLane? = null,
 ) {
+    val archived: List<KanbanCard> get() = archive?.cards.orEmpty()
+
+    /** Cards that are done: checked, or sitting in a complete lane. */
+    val finishedCount: Int get() = lanes.sumOf { lane -> lane.cards.count { it.checked || lane.isComplete } }
+
     fun laneIndex(title: String): Int = lanes.indexOfFirst { it.title.equals(title.trim(), ignoreCase = true) }
 
     fun card(ref: CardRef): KanbanCard? = lanes.getOrNull(ref.lane)?.cards?.getOrNull(ref.index)
@@ -168,6 +175,73 @@ data class KanbanBoard(
         if (lanes[index].cards.isNotEmpty()) throw KanbanException("Сначала перенесите или удалите карточки колонки")
         return copy(lanes = lanes.filterIndexed { i, _ -> i != index })
     }
+
+    /**
+     * Puts [card] back at [index] of the lane titled [laneTitle] (the first open lane if that
+     * lane is gone). Used to undo a delete or an archive.
+     */
+    fun insertCard(laneTitle: String, index: Int, card: KanbanCard): KanbanBoard {
+        val laneIdx = laneIndex(laneTitle).takeIf { it >= 0 }
+            ?: lanes.indexOfFirst { !it.isComplete }.takeIf { it >= 0 }
+            ?: throw KanbanException("На доске нет колонок")
+        val lane = lanes[laneIdx]
+        val cards = lane.cards.toMutableList()
+        cards.add(index.coerceIn(0, cards.size), card)
+        return replaceLane(laneIdx, lane.copy(cards = cards))
+    }
+
+    /** Takes the card off the board into the archive, as it is. */
+    fun archiveCard(ref: CardRef): KanbanBoard {
+        val at = locate(ref) ?: throw KanbanException("Карточка изменилась в другом месте. Обновите доску.")
+        val card = lanes[at.lane].cards[at.index]
+        return removeCard(at).withArchived(archived + card)
+    }
+
+    /** Archives every finished card (checked or in a complete lane); open cards stay. */
+    fun archiveFinished(): KanbanBoard {
+        val finished = mutableListOf<KanbanCard>()
+        val kept = lanes.map { lane ->
+            val (done, open) = lane.cards.partition { it.checked || lane.isComplete }
+            finished += done
+            lane.copy(cards = open)
+        }
+        if (finished.isEmpty()) return this
+        return copy(lanes = kept).withArchived(archived + finished)
+    }
+
+    /** Moves an archived card back onto the board; completion follows the target lane. */
+    fun restoreArchived(index: Int, text: String, toLane: Int): KanbanBoard {
+        require(toLane in lanes.indices) { "Колонка не найдена" }
+        val at = locateArchived(index, text)
+        val card = archived[at]
+        val lane = lanes[toLane]
+        val restored = replaceLane(toLane, lane.copy(cards = lane.cards + card.copy(checked = lane.isComplete)))
+        return restored.withArchived(archived.filterIndexed { i, _ -> i != at })
+    }
+
+    fun deleteArchived(index: Int, text: String): KanbanBoard {
+        val at = locateArchived(index, text)
+        return withArchived(archived.filterIndexed { i, _ -> i != at })
+    }
+
+    /** Puts a deleted archived card back at [index]; undoes [deleteArchived]. */
+    fun insertArchived(index: Int, card: KanbanCard): KanbanBoard =
+        withArchived(archived.toMutableList().apply { add(index.coerceIn(0, size), card) })
+
+    /** Removes the newest archived card with [text]; undoes an archive. No-op if it is gone. */
+    fun unarchiveLast(text: String): KanbanBoard {
+        val at = archived.indexOfLast { it.text == text }
+        if (at < 0) return this
+        return withArchived(archived.filterIndexed { i, _ -> i != at })
+    }
+
+    private fun locateArchived(index: Int, text: String): Int =
+        index.takeIf { archived.getOrNull(it)?.text == text }
+            ?: archived.indexOfFirst { it.text == text }.takeIf { it >= 0 }
+            ?: throw KanbanException("Карточка архива изменилась в другом месте. Обновите доску.")
+
+    private fun withArchived(cards: List<KanbanCard>): KanbanBoard =
+        copy(archive = (archive ?: KanbanLane(KanbanFormat.DEFAULT_ARCHIVE_TITLE)).copy(cards = cards))
 
     private fun replaceLane(index: Int, lane: KanbanLane): KanbanBoard =
         copy(lanes = lanes.toMutableList().also { it[index] = lane })
