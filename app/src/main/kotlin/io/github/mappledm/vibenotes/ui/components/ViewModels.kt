@@ -1,6 +1,9 @@
 package io.github.mappledm.vibenotes.ui.components
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -23,6 +26,18 @@ inline fun <reified VM : ViewModel> containerFactory(crossinline create: (AppCon
     }
 
 /** Runs [onResume] every time the screen returns to the foreground (e.g. after editing on a PC). */
+/** Runs [block] each time [key] changes, but not on the first composition. */
+@Composable
+fun OnChange(key: Any?, block: () -> Unit) {
+    val seen = remember { mutableStateOf(key) }
+    LaunchedEffect(key) {
+        if (key != seen.value) {
+            seen.value = key
+            block()
+        }
+    }
+}
+
 @Composable
 fun OnResume(onResume: () -> Unit) {
     val lifecycleOwner = LocalLifecycleOwner.current

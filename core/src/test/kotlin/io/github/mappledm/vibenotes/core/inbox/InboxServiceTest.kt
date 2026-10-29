@@ -168,6 +168,81 @@ class InboxServiceTest {
     }
 
     @Test
+    fun correctionNamedByTheModelReplacesTheOpenCard() = runTest {
+        val calendar = FakeCalendar()
+        val llm = ScriptedLlm(
+            ScriptedLlm.calls("create_calendar_event" to """{"title":"Встреча с Андреем","date":"2026-10-14","start_time":"15:00"}"""),
+            ScriptedLlm.calls("create_calendar_event" to """{"title":"Встреча с Андреем и Петей","date":"2026-10-14","start_time":"16:00","replaces_card":"id2"}"""),
+        )
+        val (inbox, _) = service(llm, config, calendar)
+        inbox.send("завтра в 15 встреча с Андреем")
+        val first = inbox.entries.value.last()
+        assertEquals("id2", first.proposals.single().id)
+        // The model is told the card id and how to correct it.
+        assertTrue(inbox.buildHistory(inbox.entries.value).last().actions.single().outcome.contains("replaces_card=\"id2\""))
+
+        inbox.send("нет, в 16, и Петя тоже")
+        val old = inbox.entries.value.first { it.id == first.id }.proposals.single()
+        assertEquals(ProposalStatus.REPLACED, old.status)
+        val current = inbox.entries.value.last().proposals.single()
+        assertEquals(ProposalStatus.PENDING, current.status)
+        assertEquals("15:00", (current.original as ActionProposal.CreateEvent).startTime)
+        assertEquals("16:00", (current.proposal as ActionProposal.CreateEvent).startTime)
+
+        // The replaced card cannot be confirmed: no duplicate event.
+        inbox.confirm(first.id, old.id)
+        assertTrue(calendar.inserted.isEmpty())
+        assertTrue(inbox.buildHistory(inbox.entries.value)[1].actions.single().outcome.startsWith("Replaced"))
+    }
+
+    @Test
+    fun sameEventAgainReplacesTheOpenCardEvenWithoutAnId() = runTest {
+        val llm = ScriptedLlm(
+            ScriptedLlm.calls("create_calendar_event" to """{"title":"Врач","date":"2026-10-15","start_time":"09:00"}"""),
+            ScriptedLlm.calls("create_calendar_event" to """{"title":"Врач","date":"2026-10-15","start_time":"10:00"}"""),
+            ScriptedLlm.calls("create_calendar_event" to """{"title":"Врач","date":"2026-10-16","start_time":"10:00"}"""),
+        )
+        val (inbox, _) = service(llm, config)
+        inbox.send("врач в четверг утром")
+        inbox.send("нет, в 10")
+        inbox.send("и ещё в пятницу в 10")
+
+        val cards = inbox.entries.value.flatMap { it.proposals }
+        assertEquals(listOf(ProposalStatus.REPLACED, ProposalStatus.PENDING, ProposalStatus.PENDING), cards.map { it.status })
+        // Another day is another event, not a correction.
+        assertNull(cards.last().original)
+    }
+
+    @Test
+    fun confirmedCardIsNeverReplaced() = runTest {
+        val llm = ScriptedLlm(
+            ScriptedLlm.calls("add_task" to """{"title":"Купить хлеб"}"""),
+            ScriptedLlm.calls("add_task" to """{"title":"Купить хлеб","replaces_card":"id2"}"""),
+        )
+        val (inbox, _) = service(llm, config)
+        inbox.send("купить хлеб")
+        val entry = inbox.entries.value.last()
+        inbox.confirm(entry.id, entry.proposals.single().id)
+        inbox.send("купить хлеб")
+        val cards = inbox.entries.value.flatMap { it.proposals }
+        assertEquals(listOf(ProposalStatus.APPLIED, ProposalStatus.PENDING), cards.map { it.status })
+    }
+
+    @Test
+    fun tabContextGoesToTheModelButNotIntoTheMessage() = runTest {
+        val llm = ScriptedLlm(ScriptedLlm.text("Записал бы, но нужна подробность."), ScriptedLlm.text("Ок"))
+        val (inbox, _) = service(llm, config)
+        inbox.send("встреча в 15", ChatFocus("пт 16 окт", "the user tapped + on Friday 2026-10-16"))
+        val user = inbox.entries.value.first()
+        assertEquals("встреча в 15", user.text)
+        assertEquals("пт 16 окт", user.focus?.label)
+        assertEquals("[Context: the user tapped + on Friday 2026-10-16]\nвстреча в 15", llm.requests[0].messages.last().content)
+
+        inbox.send("с Андреем")
+        assertTrue(llm.requests[1].messages.any { it.role == Role.USER && it.content.startsWith("[Context: the user tapped + on Friday") })
+    }
+
+    @Test
     fun textOnlyClaimOfAnActionIsFlaggedAndKeptOutOfHistory() = runTest {
         // What DeepSeek did on the device: wrote the action as text instead of calling a tool.
         val llm = ScriptedLlm(ScriptedLlm.text("[событие «Анализы» 2026-10-14 09:30–10:30 — выполнено]"))

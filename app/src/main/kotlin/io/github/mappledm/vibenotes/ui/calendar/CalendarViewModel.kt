@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import io.github.mappledm.vibenotes.AppContainer
 import io.github.mappledm.vibenotes.core.calendar.CalendarEvent
 import io.github.mappledm.vibenotes.core.kanban.TaskItem
-import io.github.mappledm.vibenotes.ui.components.Dates
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -141,9 +140,10 @@ class CalendarViewModel(private val container: AppContainer) : ViewModel() {
         if (reload) refresh()
     }
 
-    /** Puts the day into the Inbox composer: the chat is where things get planned. */
-    fun planFor(date: LocalDate) {
-        container.pendingShare.value = "${Dates.long(date)}: "
+    /** Opens the week (or the month) of [date] with that day selected. */
+    fun show(date: LocalDate) {
+        _state.update { it.copy(weekStart = CalendarRange.mondayOf(date), month = YearMonth.from(date), selected = date) }
+        refresh()
     }
 
     fun refresh() {

@@ -1,17 +1,7 @@
 package io.github.mappledm.vibenotes.ui.inbox
 
-import android.content.ActivityNotFoundException
-import android.content.Intent
-import android.net.Uri
-import android.provider.CalendarContract
-import android.provider.Settings
-import android.speech.RecognizerIntent
-import android.view.KeyCharacterMap
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -20,35 +10,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.CalendarMonth
-import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Lock
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.ErrorOutline
-import androidx.compose.material.icons.outlined.TaskAlt
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -60,42 +30,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.isCtrlPressed
-import androidx.compose.ui.input.key.isShiftPressed
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import io.github.mappledm.vibenotes.core.agent.ActionProposal
-import io.github.mappledm.vibenotes.core.agent.ActivityKind
-import io.github.mappledm.vibenotes.core.agent.ResultTarget
-import io.github.mappledm.vibenotes.core.agent.ToolActivity
-import io.github.mappledm.vibenotes.core.inbox.ChatEntry
-import io.github.mappledm.vibenotes.core.inbox.ChatRole
-import io.github.mappledm.vibenotes.core.inbox.ProposalItem
-import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
-import io.github.mappledm.vibenotes.ui.components.MarkdownView
 import io.github.mappledm.vibenotes.ui.components.OnResume
-import io.github.mappledm.vibenotes.ui.components.containerFactory
 import io.github.mappledm.vibenotes.ui.update.UpdateBanner
-import java.time.ZoneId
-
-private const val LOAD_ONLY = "load"
 
 private val Suggestions = listOf(
     "Завтра в 15:00 встреча с Андреем на час",
@@ -104,93 +45,13 @@ private val Suggestions = listOf(
     "Что у меня на этой неделе?",
 )
 
+/** The whole conversation of the day; cards of messages sent from other tabs are here too. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun InboxScreen(
-    onOpenNote: (String) -> Unit,
-    onOpenBoard: (String) -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    val vm: InboxViewModel = viewModel(factory = containerFactory { InboxViewModel(it) })
+fun InboxScreen(chat: ChatController, onOpenSettings: () -> Unit) {
+    val vm = chat.vm
     val entries by vm.entries.collectAsStateWithLifecycle()
-    val generating by vm.generating.collectAsStateWithLifecycle()
     val aiConfigured by vm.aiConfigured.collectAsStateWithLifecycle()
-    val calendars by vm.calendars.collectAsStateWithLifecycle()
-    val boards by vm.boards.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-
-    var editing by remember { mutableStateOf<Pair<String, ProposalItem>?>(null) }
-    var pendingConfirm by rememberSaveable { mutableStateOf<String?>(null) }
-    var permissionDenied by rememberSaveable { mutableStateOf(false) }
-
-    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        val target = pendingConfirm
-        pendingConfirm = null
-        val granted = grants.isNotEmpty() && grants.values.all { it }
-        if (!granted) permissionDenied = true
-        if (target != null && target != LOAD_ONLY) {
-            // Without permission the card shows an honest failure with next steps;
-            // with it, the event is added unless a calendar still has to be chosen.
-            val (entryId, proposalId) = target.split('|', limit = 2)
-            vm.afterPermission(entryId, proposalId, granted)
-        } else {
-            vm.loadCalendars()
-        }
-    }
-
-    fun openAppSettings() {
-        context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
-    }
-
-    fun confirm(entryId: String, item: ProposalItem) {
-        if (item.proposal.needsCalendarPermission() && !vm.hasCalendarPermission()) {
-            pendingConfirm = "$entryId|${item.id}"
-            permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
-        } else {
-            vm.confirm(entryId, item.id)
-        }
-    }
-
-    fun requestPermission(entryId: String, item: ProposalItem) {
-        when {
-            vm.hasCalendarPermission() -> vm.afterPermission(entryId, item.id, granted = true)
-            // After a denial Android may stop showing the dialog: send the user to app settings.
-            permissionDenied -> openAppSettings()
-            else -> {
-                pendingConfirm = "$entryId|${item.id}"
-                permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
-            }
-        }
-    }
-
-    fun loadCalendars() {
-        when {
-            vm.hasCalendarPermission() -> vm.loadCalendars()
-            permissionDenied -> openAppSettings()
-            else -> {
-                pendingConfirm = LOAD_ONLY
-                permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS)
-            }
-        }
-    }
-
-    fun openTarget(item: ProposalItem) {
-        when (val target = item.target) {
-            is ResultTarget.Note -> onOpenNote(target.path)
-            is ResultTarget.Board -> onOpenBoard(target.path)
-            is ResultTarget.Event -> runCatching {
-                val start = when (val p = item.proposal) {
-                    is ActionProposal.CreateEvent -> p.startDateTime
-                    is ActionProposal.UpdateEvent -> p.after.startDateTime
-                    else -> null
-                }
-                val begin = start?.atZone(ZoneId.systemDefault())?.toInstant()?.toEpochMilli()
-                    ?: System.currentTimeMillis()
-                context.startActivity(AndroidCalendarGateway.viewTimeIntent(begin))
-            }
-            null -> Unit
-        }
-    }
 
     OnResume { vm.onResume() }
 
@@ -203,18 +64,11 @@ fun InboxScreen(
                 },
             )
         },
-        bottomBar = {
-            Composer(
-                vm = vm,
-                generating = generating,
-                aiConfigured = aiConfigured,
-            )
-        },
     ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(top = padding.calculateTopPadding()),
         ) {
             UpdateBanner()
             if (!aiConfigured) AiBanner(onOpenSettings)
@@ -228,40 +82,12 @@ fun InboxScreen(
                     reverseLayout = true,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(reversed, key = { it.id }) { entry ->
-                        EntryItem(
-                            entry = entry,
-                            calendars = calendars,
-                            onConfirm = { confirm(entry.id, it) },
-                            onDismiss = { vm.dismiss(entry.id, it.id) },
-                            onEdit = { editing = entry.id to it },
-                            onOpen = { openTarget(it) },
-                            onUndo = { vm.undo(entry.id, it.id) },
-                            onRequestPermission = { requestPermission(entry.id, it) },
-                            onOpenInCalendarApp = { openInCalendarApp(context, it.proposal) },
-                            onRetry = { vm.retry(entry.id) },
-                            needsCalendarChoice = { vm.needsCalendarChoice(it.proposal, calendars) },
-                            selectedCalendar = { (it.proposal as? ActionProposal.CreateEvent)?.let { e -> vm.effectiveCalendar(e, calendars) } },
-                            onChooseCalendar = { item, id -> vm.chooseCalendar(entry.id, item.id, id) },
-                            onLoadCalendars = ::loadCalendars,
-                            onWikiLink = { target -> vm.resolveNote(target)?.let(onOpenNote) },
-                        )
-                    }
+                    items(reversed, key = { it.id }) { entry -> ChatEntryItem(entry, chat) }
                 }
             }
         }
-    }
-
-    editing?.let { (entryId, item) ->
-        ProposalEditorDialog(
-            proposal = item.proposal,
-            calendars = calendars,
-            boards = boards,
-            onDismiss = { editing = null },
-            onSave = { proposal, done -> vm.edit(entryId, item.id, proposal, done) },
-        )
     }
 }
 
@@ -319,213 +145,5 @@ private fun EmptyInbox(aiConfigured: Boolean, onSuggestion: (String) -> Unit) {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun EntryItem(
-    entry: ChatEntry,
-    calendars: List<io.github.mappledm.vibenotes.core.calendar.CalendarInfo>,
-    onConfirm: (ProposalItem) -> Unit,
-    onDismiss: (ProposalItem) -> Unit,
-    onEdit: (ProposalItem) -> Unit,
-    onOpen: (ProposalItem) -> Unit,
-    onUndo: (ProposalItem) -> Unit,
-    onRequestPermission: (ProposalItem) -> Unit,
-    onOpenInCalendarApp: (ProposalItem) -> Unit,
-    onRetry: () -> Unit,
-    onWikiLink: (String) -> Unit,
-    needsCalendarChoice: (ProposalItem) -> Boolean,
-    selectedCalendar: (ProposalItem) -> io.github.mappledm.vibenotes.core.calendar.CalendarInfo?,
-    onChooseCalendar: (ProposalItem, Long) -> Unit,
-    onLoadCalendars: () -> Unit,
-) {
-    when (entry.role) {
-        ChatRole.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.widthIn(max = 320.dp),
-            ) {
-                SelectionContainer {
-                    Text(entry.text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
-                }
-            }
-        }
-        ChatRole.NOTICE -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-            Icon(Icons.Outlined.Info, null, Modifier.size(16.dp).padding(top = 2.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.size(8.dp))
-            Text(entry.text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        ChatRole.ASSISTANT -> Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (entry.activities.isNotEmpty()) ActivityList(entry.activities)
-            if (entry.streaming && entry.text.isEmpty() && entry.proposals.isEmpty()) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Думаю…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            if (entry.text.isNotBlank()) {
-                SelectionContainer {
-                    MarkdownView(entry.text, compact = true, onWikiLink = onWikiLink)
-                }
-            }
-            entry.proposals.forEach { item ->
-                ProposalCard(
-                    item = item,
-                    calendars = calendars,
-                    onConfirm = { onConfirm(item) },
-                    onDismiss = { onDismiss(item) },
-                    onEdit = { onEdit(item) },
-                    onOpen = { onOpen(item) },
-                    onUndo = { onUndo(item) },
-                    onRequestPermission = { onRequestPermission(item) },
-                    onOpenInCalendarApp = { onOpenInCalendarApp(item) },
-                    selectedCalendar = selectedCalendar(item),
-                    needsCalendarChoice = needsCalendarChoice(item),
-                    onChooseCalendar = { id -> onChooseCalendar(item, id) },
-                    onLoadCalendars = onLoadCalendars,
-                )
-            }
-            entry.error?.let { error ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.size(8.dp))
-                    Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onRetry) { Text("Повторить") }
-                }
-            }
-        }
-    }
-}
-
-/** Shows exactly what the assistant looked at — this content was sent to the AI provider. */
-@Composable
-private fun ActivityList(activities: List<ToolActivity>) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        activities.forEach { activity ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(activityIcon(activity.kind), null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.size(6.dp))
-                Text(activity.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-private fun activityIcon(kind: ActivityKind): ImageVector = when (kind) {
-    ActivityKind.SEARCH -> Icons.Outlined.Search
-    ActivityKind.READ -> Icons.Outlined.Description
-    ActivityKind.TASKS -> Icons.Outlined.TaskAlt
-    ActivityKind.CALENDAR -> Icons.Outlined.CalendarMonth
-    ActivityKind.PRIVATE -> Icons.Outlined.Lock
-    ActivityKind.ERROR -> Icons.Outlined.ErrorOutline
-}
-
-@Composable
-private fun Composer(vm: InboxViewModel, generating: Boolean, aiConfigured: Boolean) {
-    val context = LocalContext.current
-    val speechAvailable = remember {
-        context.packageManager.queryIntentActivities(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isNotEmpty()
-    }
-    val speechLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        val text = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
-        if (!text.isNullOrBlank()) vm.appendToComposer(text)
-    }
-    val value = vm.composer
-
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Column(
-            Modifier
-                .navigationBarsPadding()
-                .imePadding(),
-        ) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Box(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
-                        if (value.text.isEmpty()) {
-                            Text(
-                                if (aiConfigured) "Событие, задача, мысль…" else "Запишите мысль…",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        BasicTextField(
-                            value = value,
-                            onValueChange = vm::onComposerChange,
-                            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                            maxLines = 6,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = 24.dp)
-                                .onPreviewKeyEvent { event ->
-                                    // Hardware keyboard: Enter sends, Shift+Enter is a new line.
-                                    val hardware = event.nativeKeyEvent.deviceId != KeyCharacterMap.VIRTUAL_KEYBOARD
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Enter &&
-                                        (event.isCtrlPressed || (hardware && !event.isShiftPressed))
-                                    ) {
-                                        vm.send()
-                                        true
-                                    } else false
-                                },
-                        )
-                    }
-                }
-                Spacer(Modifier.size(8.dp))
-                when {
-                    generating -> FilledIconButton(onClick = vm::stop) {
-                        Icon(Icons.Filled.Stop, contentDescription = "Остановить")
-                    }
-                    value.text.isBlank() && speechAvailable -> FilledIconButton(onClick = {
-                        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-                            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Говорите…")
-                        runCatching { speechLauncher.launch(intent) }
-                    }) {
-                        Icon(Icons.Filled.Mic, contentDescription = "Голосовой ввод")
-                    }
-                    else -> FilledIconButton(onClick = vm::send, enabled = value.text.isNotBlank()) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Отправить")
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun ActionProposal.needsCalendarPermission(): Boolean =
-    this is ActionProposal.CreateEvent || this is ActionProposal.UpdateEvent || this is ActionProposal.DeleteEvent
-
-/** Fallback without calendar permission: open the system "new event" screen prefilled. */
-private fun openInCalendarApp(context: android.content.Context, proposal: ActionProposal) {
-    val p = proposal as? ActionProposal.CreateEvent ?: return
-    val zone = ZoneId.systemDefault()
-    val intent = Intent(Intent.ACTION_INSERT)
-        .setData(CalendarContract.Events.CONTENT_URI)
-        .putExtra(CalendarContract.Events.TITLE, p.title)
-        .putExtra(CalendarContract.EXTRA_EVENT_ALL_DAY, p.allDay)
-        .putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, p.startDateTime.atZone(zone).toInstant().toEpochMilli())
-        .putExtra(CalendarContract.EXTRA_EVENT_END_TIME, p.endDateTime.atZone(zone).toInstant().toEpochMilli())
-    p.location?.let { intent.putExtra(CalendarContract.Events.EVENT_LOCATION, it) }
-    p.description?.let { intent.putExtra(CalendarContract.Events.DESCRIPTION, it) }
-    try {
-        context.startActivity(intent)
-    } catch (_: ActivityNotFoundException) {
-        context.startActivity(
-            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-        )
     }
 }

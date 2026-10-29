@@ -7,11 +7,14 @@ import io.github.mappledm.vibenotes.core.ai.LlmRequest
 import io.github.mappledm.vibenotes.core.ai.ProviderConfig
 import io.github.mappledm.vibenotes.core.ai.Role
 import io.github.mappledm.vibenotes.core.ai.ToolCallRequest
+import io.github.mappledm.vibenotes.core.ai.ToolSpec
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 /**
  * An action proposed in an earlier turn, replayed to the model as a real tool call plus its
@@ -24,7 +27,8 @@ data class ConversationTurn(val role: Role, val text: String, val actions: List<
 sealed interface AssistantEvent {
     data class TextDelta(val text: String) : AssistantEvent
     data class Activity(val activity: ToolActivity) : AssistantEvent
-    data class Proposal(val proposal: ActionProposal) : AssistantEvent
+    /** [replacesCard]: the card the user corrected, as the model was told in history ([cardRef]). */
+    data class Proposal(val proposal: ActionProposal, val replacesCard: String? = null) : AssistantEvent
     data class Finished(val text: String) : AssistantEvent
 }
 
@@ -67,7 +71,7 @@ class AssistantEngine(
         messages += LlmMessage(Role.USER, userText)
 
         val enabledTools = registry.tools.filter { it.spec.name !in options.disabledTools }
-        val specs = enabledTools.map { it.spec }
+        val specs = enabledTools.map { if (it.kind == ToolKind.PROPOSE) it.spec.withReplacesCard() else it.spec }
         val finalText = StringBuilder()
         val maxSteps = options.maxSteps.coerceIn(1, 10)
 
@@ -118,7 +122,7 @@ class AssistantEngine(
                             outcome.forModel
                         }
                         is ToolOutcome.Propose -> {
-                            emit(AssistantEvent.Proposal(outcome.proposal))
+                            emit(AssistantEvent.Proposal(outcome.proposal, args.string(REPLACES_CARD)))
                             "Shown to the user as a confirmation card. It is NOT executed yet; do not claim it is done."
                         }
                         is ToolOutcome.Error -> {
@@ -138,4 +142,23 @@ class AssistantEngine(
         }
         emit(AssistantEvent.Finished(finalText.toString()))
     }
+}
+
+/** Optional argument of every PROPOSE tool: the open card this proposal corrects. */
+internal const val REPLACES_CARD = "replaces_card"
+
+/** Short card id the model sees in history and passes back in [REPLACES_CARD]. */
+fun cardRef(proposalId: String): String = proposalId.take(8)
+
+private fun ToolSpec.withReplacesCard(): ToolSpec {
+    val properties = parameters["properties"]?.jsonObject ?: return this
+    val replaces = buildJsonObject {
+        put("type", "string")
+        put(
+            "description",
+            "Id of a card that is still waiting for confirmation, when this proposal corrects it " +
+                "(\"no, at 16:00\"). The old card is replaced instead of a second card appearing.",
+        )
+    }
+    return copy(parameters = JsonObject(parameters + ("properties" to JsonObject(properties + (REPLACES_CARD to replaces)))))
 }

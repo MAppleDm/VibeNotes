@@ -10,6 +10,7 @@ import io.github.mappledm.vibenotes.core.agent.AssistantEngine
 import io.github.mappledm.vibenotes.core.agent.AssistantEvent
 import io.github.mappledm.vibenotes.core.agent.ConversationTurn
 import io.github.mappledm.vibenotes.core.agent.PastAction
+import io.github.mappledm.vibenotes.core.agent.cardRef
 import io.github.mappledm.vibenotes.core.agent.toolCall
 import io.github.mappledm.vibenotes.core.agent.ProposalValidator
 import io.github.mappledm.vibenotes.core.ai.LlmException
@@ -43,19 +44,20 @@ class InboxService(
 ) {
     val entries = store.entries
 
-    suspend fun send(text: String) {
+    /** [focus]: the tab the message was written on; it tells the model which day, board or note kind is meant. */
+    suspend fun send(text: String, focus: ChatFocus? = null) {
         val message = text.trim()
         if (message.isEmpty()) return
         store.load()
         val history = buildHistory(store.entries.value)
-        store.add(ChatEntry(newId(), ChatRole.USER, message, now().toInstant().toEpochMilli()))
+        store.add(ChatEntry(newId(), ChatRole.USER, message, now().toInstant().toEpochMilli(), focus = focus))
 
         val config = providerConfig()
         if (config == null) {
             captureWithoutAi(message)
             return
         }
-        respond(config, history, message)
+        respond(config, history, withFocus(message, focus))
     }
 
     /** Re-runs the assistant for the user message right before the failed [entryId]. */
@@ -67,7 +69,7 @@ class InboxService(
         val config = providerConfig() ?: return
         val history = buildHistory(all.subList(0, all.indexOf(userEntry)))
         store.update(entryId) { it.copy(text = "", error = null, activities = emptyList(), proposals = emptyList()) }
-        respond(config, history, userEntry.text, existingEntryId = entryId)
+        respond(config, history, withFocus(userEntry.text, userEntry.focus), existingEntryId = entryId)
     }
 
     private suspend fun respond(config: ProviderConfig, history: List<ConversationTurn>, message: String, existingEntryId: String? = null) {
@@ -81,9 +83,7 @@ class InboxService(
                 when (event) {
                     is AssistantEvent.TextDelta -> store.update(entryId, persist = false) { it.copy(text = it.text + event.text) }
                     is AssistantEvent.Activity -> store.update(entryId, persist = false) { it.copy(activities = it.activities + event.activity) }
-                    is AssistantEvent.Proposal -> store.update(entryId, persist = false) {
-                        it.copy(proposals = it.proposals + ProposalItem(newId(), event.proposal))
-                    }
+                    is AssistantEvent.Proposal -> addProposal(entryId, event.proposal, event.replacesCard)
                     is AssistantEvent.Finished -> {
                         var claimed = false
                         store.update(entryId) { entry ->
@@ -134,6 +134,29 @@ class InboxService(
         }
     }
 
+    /**
+     * A correction ("нет, в 16") takes the place of the card it corrects: the old card is marked
+     * [ProposalStatus.REPLACED] and can no longer be confirmed, so the chat never holds two live
+     * versions of one action. The model names the card; without that, an open card about the same
+     * thing (same title and day, same event or task) counts as corrected.
+     */
+    private suspend fun addProposal(entryId: String, proposal: ActionProposal, replacesCard: String?) {
+        val open = store.entries.value
+            .filter { it.id != entryId }
+            .flatMap { entry -> entry.proposals.filter { it.status.isOpen }.map { entry.id to it } }
+        val ref = replacesCard?.trim()?.removePrefix("card ")
+        val key = proposal.subjectKey()
+        val replaced = open.lastOrNull { (_, item) -> cardRef(item.id) == ref }
+            ?: key?.let { k -> open.lastOrNull { (_, item) -> item.proposal.subjectKey() == k } }
+        val item = ProposalItem(newId(), proposal, original = replaced?.second?.let { it.original ?: it.proposal })
+        store.update(entryId, persist = false) { it.copy(proposals = it.proposals + item) }
+        if (replaced != null) {
+            store.updateProposal(replaced.first, replaced.second.id) {
+                if (it.status.isOpen) it.copy(status = ProposalStatus.REPLACED, resultMessage = null) else it
+            }
+        }
+    }
+
     private suspend fun captureWithoutAi(message: String) {
         val path = inboxNotePath()
         val stamp = now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"))
@@ -149,7 +172,8 @@ class InboxService(
 
     suspend fun confirm(entryId: String, proposalId: String): ActionResult? {
         val item = store.find(entryId)?.proposals?.firstOrNull { it.id == proposalId } ?: return null
-        if (item.status == ProposalStatus.APPLYING || item.status == ProposalStatus.APPLIED) return null
+        // A replaced card was corrected later: only its newer version can be confirmed.
+        if (item.status == ProposalStatus.APPLYING || item.status == ProposalStatus.APPLIED || item.status == ProposalStatus.REPLACED) return null
         store.updateProposal(entryId, proposalId) { it.copy(status = ProposalStatus.APPLYING, resultMessage = null) }
         val result = withContext(NonCancellable) { executor.execute(item.proposal) }
         store.updateProposal(entryId, proposalId) {
@@ -198,7 +222,8 @@ class InboxService(
 
     suspend fun dismiss(entryId: String, proposalId: String) {
         store.updateProposal(entryId, proposalId) {
-            if (it.status == ProposalStatus.APPLIED || it.status == ProposalStatus.APPLYING) it else it.copy(status = ProposalStatus.DISMISSED)
+            if (it.status == ProposalStatus.APPLIED || it.status == ProposalStatus.APPLYING || it.status == ProposalStatus.REPLACED) it
+            else it.copy(status = ProposalStatus.DISMISSED)
         }
     }
 
@@ -206,7 +231,8 @@ class InboxService(
     suspend fun edit(entryId: String, proposalId: String, proposal: ActionProposal): String? {
         ProposalValidator.validate(proposal)?.let { return it }
         store.updateProposal(entryId, proposalId) {
-            if (it.status == ProposalStatus.APPLIED) it else it.copy(proposal = proposal, status = ProposalStatus.PENDING, resultMessage = null)
+            if (it.status == ProposalStatus.APPLIED || it.status == ProposalStatus.REPLACED) it
+            else it.copy(proposal = proposal, status = ProposalStatus.PENDING, resultMessage = null)
         }
         return null
     }
@@ -228,7 +254,7 @@ class InboxService(
             .takeLast(historySize())
             .mapNotNull { entry ->
                 when (entry.role) {
-                    ChatRole.USER -> ConversationTurn(Role.USER, entry.text)
+                    ChatRole.USER -> ConversationTurn(Role.USER, withFocus(entry.text, entry.focus))
                     ChatRole.ASSISTANT -> {
                         val actions = entry.proposals.map { item ->
                             val (tool, args) = item.proposal.toolCall()
@@ -241,14 +267,36 @@ class InboxService(
             }
 
     private fun outcomeText(item: ProposalItem): String = when (item.status) {
-        ProposalStatus.PENDING, ProposalStatus.APPLYING ->
-            "Shown to the user as a card; NOT confirmed yet, nothing was created or changed."
+        ProposalStatus.PENDING ->
+            "Shown to the user as card ${cardRef(item.id)}; NOT confirmed yet, nothing was created or changed. " +
+                "To correct it, propose again with replaces_card=\"${cardRef(item.id)}\"."
+        ProposalStatus.APPLYING -> "Shown to the user as a card; NOT confirmed yet, nothing was created or changed."
         ProposalStatus.APPLIED -> "The user confirmed and the app completed it: ${item.resultMessage ?: "done"}."
         ProposalStatus.UNDONE -> "The user confirmed it, then undid it. Nothing created or changed by it remains."
         ProposalStatus.DISMISSED -> "The user dismissed the card. Nothing was created or changed."
-        ProposalStatus.FAILED -> "Failed: ${item.resultMessage ?: "error"}. Nothing was created or changed."
+        ProposalStatus.FAILED -> "Card ${cardRef(item.id)} failed: ${item.resultMessage ?: "error"}. Nothing was created or changed. " +
+            "To correct it, propose again with replaces_card=\"${cardRef(item.id)}\"."
+        ProposalStatus.REPLACED -> "Replaced by a corrected card in a later turn. Nothing was created or changed by this one."
     }
 
+}
+
+/** The tab's context goes to the model in front of the message, never into the text the user sees. */
+internal fun withFocus(message: String, focus: ChatFocus?): String =
+    if (focus == null) message else "[Context: ${focus.hint}]\n$message"
+
+/**
+ * What a proposal is about, to recognise a correction the model did not mark: the same event title on the
+ * same day, the same task, note or existing event. Appending text has no subject: two thoughts are two cards.
+ */
+internal fun ActionProposal.subjectKey(): String? = when (this) {
+    is ActionProposal.CreateEvent -> "event:${title.trim().lowercase()}@$date"
+    is ActionProposal.AddTask -> "task:${boardPath.lowercase()}:${title.trim().lowercase()}"
+    is ActionProposal.CreateNote -> "note:${folder.lowercase()}:${title.trim().lowercase()}"
+    is ActionProposal.AppendToNote -> null
+    is ActionProposal.UpdateEvent -> "event#$eventId"
+    is ActionProposal.DeleteEvent -> "event#$eventId"
+    is ActionProposal.UpdateTask -> "task:${before.boardPath.lowercase()}:${before.text}"
 }
 
 private val completionClaim =

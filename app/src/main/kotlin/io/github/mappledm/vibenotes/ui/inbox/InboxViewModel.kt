@@ -12,6 +12,9 @@ import io.github.mappledm.vibenotes.core.agent.ActionProposal
 import io.github.mappledm.vibenotes.core.agent.BoardInfo
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.inbox.ChatEntry
+import io.github.mappledm.vibenotes.core.inbox.ChatFocus
+import io.github.mappledm.vibenotes.core.inbox.ChatRole
+import io.github.mappledm.vibenotes.core.inbox.isOpen
 import io.github.mappledm.vibenotes.core.kanban.KanbanFormat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +25,26 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+const val LATEST_EXCHANGE = "latest"
+
+/**
+ * The messages [panel] points at: one user message and the answers to it. For an answer id,
+ * the exchange around that answer; for [LATEST_EXCHANGE], the last one.
+ */
+fun exchange(entries: List<ChatEntry>, panel: String?): List<ChatEntry> {
+    if (panel == null || entries.isEmpty()) return emptyList()
+    val at = if (panel == LATEST_EXCHANGE) entries.lastIndex else entries.indexOfFirst { it.id == panel }.takeIf { it >= 0 } ?: return emptyList()
+    val start = (at downTo 0).firstOrNull { entries[it].role == ChatRole.USER } ?: at
+    val end = (at + 1..entries.lastIndex).firstOrNull { entries[it].role == ChatRole.USER } ?: entries.size
+    return entries.subList(start, end)
+}
+
+/** A card still waiting for the user, shown on the calendar day or the board where it will land. */
+data class Draft(val entryId: String, val proposal: ActionProposal)
+
+fun drafts(entries: List<ChatEntry>): List<Draft> =
+    entries.flatMap { entry -> entry.proposals.filter { it.status.isOpen }.map { Draft(entry.id, it.proposal) } }
 
 class InboxViewModel(private val container: AppContainer) : ViewModel() {
     private val vault = container.requireVault()
@@ -81,19 +104,36 @@ class InboxViewModel(private val container: AppContainer) : ViewModel() {
         composer = TextFieldValue(text, TextRange(text.length))
     }
 
-    fun send() {
+    /**
+     * Which exchange the answer panel shows over the other tabs: [LATEST_EXCHANGE], the id of an
+     * assistant answer (a draft was tapped), or null when the panel is closed.
+     */
+    var panel by mutableStateOf<String?>(null)
+        private set
+
+    /** [focus]: the tab's context; [inPanel]: sent from another tab, so the answer opens over it. */
+    fun send(focus: ChatFocus? = null, inPanel: Boolean = false) {
         val text = composer.text.trim()
         if (text.isEmpty() || _generating.value) return
         composer = TextFieldValue("")
+        panel = if (inPanel) LATEST_EXCHANGE else null
         job = viewModelScope.launch(Dispatchers.Default) {
             _generating.value = true
             try {
                 runCatching { container.clearChatIfNewDay() }
-                inbox.send(text)
+                inbox.send(text, focus)
             } finally {
                 _generating.value = false
             }
         }
+    }
+
+    fun showInPanel(entryId: String) {
+        panel = entryId
+    }
+
+    fun closePanel() {
+        panel = null
     }
 
     fun stop() {

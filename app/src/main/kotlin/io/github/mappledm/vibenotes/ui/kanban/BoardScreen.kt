@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -67,6 +68,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +90,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.mappledm.vibenotes.core.agent.ActionProposal
+import io.github.mappledm.vibenotes.core.inbox.ChatFocus
 import io.github.mappledm.vibenotes.core.kanban.CardRef
 import io.github.mappledm.vibenotes.core.kanban.KanbanBoard
 import io.github.mappledm.vibenotes.core.kanban.KanbanCard
@@ -95,10 +99,16 @@ import io.github.mappledm.vibenotes.core.kanban.KanbanLane
 import io.github.mappledm.vibenotes.core.notes.NoteMeta
 import io.github.mappledm.vibenotes.ui.components.DatePickerModal
 import io.github.mappledm.vibenotes.ui.components.Dates
+import io.github.mappledm.vibenotes.ui.components.OnChange
 import io.github.mappledm.vibenotes.ui.components.OnResume
+import io.github.mappledm.vibenotes.ui.Focus
+import io.github.mappledm.vibenotes.ui.Spot
 import io.github.mappledm.vibenotes.ui.components.containerFactory
+import io.github.mappledm.vibenotes.ui.components.dashedBorder
+import io.github.mappledm.vibenotes.ui.inbox.Draft
 import io.github.mappledm.vibenotes.ui.notes.TextInputDialog
 import io.github.mappledm.vibenotes.ui.theme.LocalExtraColors
+import kotlinx.coroutines.delay
 import java.time.LocalDate
 
 /**
@@ -118,6 +128,12 @@ fun BoardScreen(
     boards: List<NoteMeta> = emptyList(),
     onSwitchBoard: ((String) -> Unit)? = null,
     createIfMissing: Boolean = false,
+    onFocus: (ChatFocus?) -> Unit = {},
+    drafts: List<Draft> = emptyList(),
+    onShowDraft: (String) -> Unit = {},
+    spot: Spot.Card? = null,
+    onSpotShown: () -> Unit = {},
+    chatChanges: Any? = null,
 ) {
     val vm: BoardViewModel = viewModel(key = "board:$path", factory = containerFactory { BoardViewModel(it, path, createIfMissing) })
     val board by vm.board.collectAsStateWithLifecycle()
@@ -130,8 +146,41 @@ fun BoardScreen(
     var editing by remember { mutableStateOf<CardRef?>(null) }
     // Collapsed state per column title; "done" columns and the archive start collapsed.
     val collapsed = remember { mutableStateMapOf<String, Boolean>() }
+    val listState = rememberLazyListState()
+    var highlighted by remember { mutableStateOf<String?>(null) }
+    // Tasks the chat proposes for this board, shown dashed in their column until confirmed.
+    val boardDrafts = remember(drafts, path) {
+        drafts.filter { (it.proposal as? ActionProposal.AddTask)?.boardPath?.equals(path, ignoreCase = true) == true }
+    }
+
+    LaunchedEffect(vm.title) { onFocus(Focus.board(vm.title)) }
+    // "Открыть" on a card in the chat or in the calendar: unfold its column, scroll to it, highlight it.
+    LaunchedEffect(spot, board) {
+        val target = spot?.takeIf { it.boardPath.equals(path, ignoreCase = true) } ?: return@LaunchedEffect
+        val current = board ?: return@LaunchedEffect
+        onSpotShown()
+        val laneIndex = current.lanes.indexOfFirst { lane -> lane.cards.any { it.title.equals(target.title, ignoreCase = true) } }
+        if (laneIndex < 0) return@LaunchedEffect
+        val lane = current.lanes[laneIndex]
+        val cardIndex = lane.cards.indexOfFirst { it.title.equals(target.title, ignoreCase = true) }
+        collapsed[lane.title] = false
+        highlighted = lane.cards[cardIndex].text
+        val firstOpen = current.lanes.indexOfFirst { !it.isComplete }.takeIf { it >= 0 } ?: 0
+        val index = itemIndexOf(current, laneIndex, cardIndex) { i, l ->
+            (collapsed[l.title] ?: l.isComplete) to laneDrafts(boardDrafts, current, i, firstOpen).size
+        }
+        listState.animateScrollToItem(index)
+    }
+    LaunchedEffect(highlighted) {
+        if (highlighted != null) {
+            delay(HIGHLIGHT_MILLIS)
+            highlighted = null
+        }
+    }
 
     OnResume { vm.load() }
+    // A card confirmed or undone in the answer panel changes what this tab shows.
+    OnChange(chatChanges) { vm.load() }
     LaunchedEffect(message) {
         val m = message ?: return@LaunchedEffect
         // Cleared only after the snackbar is gone: clearing first would change the key and cancel the snackbar.
@@ -199,6 +248,7 @@ fun BoardScreen(
         }
         val firstOpenLane = current.lanes.indexOfFirst { !it.isComplete }.takeIf { it >= 0 } ?: 0
         LazyColumn(
+            state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 4.dp, bottom = 32.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -224,10 +274,15 @@ fun BoardScreen(
                     )
                 }
                 if (!isCollapsed) {
+                    val laneDrafts = laneDrafts(boardDrafts, current, laneIndex, firstOpenLane)
+                    itemsIndexed(laneDrafts, key = { index, draft -> "draft:$laneIndex:$index:${draft.entryId}" }) { _, draft ->
+                        DraftCardRow(draft) { onShowDraft(draft.entryId) }
+                    }
                     itemsIndexed(lane.cards, key = { index, card -> "card:$laneIndex:$index:${card.text}" }) { index, card ->
                         val ref = CardRef(laneIndex, index, card.text)
                         CardRow(
                             card = card,
+                            highlighted = card.text == highlighted,
                             next = nextStep(current, laneIndex, firstOpenLane),
                             board = current,
                             laneIndex = laneIndex,
@@ -239,7 +294,7 @@ fun BoardScreen(
                             onDelete = { vm.delete(ref) },
                         )
                     }
-                    if (lane.cards.isEmpty()) {
+                    if (lane.cards.isEmpty() && laneDrafts.isEmpty()) {
                         item(key = "empty:$laneIndex") {
                             Text(
                                 emptyLaneHint(current, laneIndex, firstOpenLane),
@@ -294,6 +349,57 @@ fun BoardScreen(
             onArchive = { vm.archive(ref); editing = null },
             onDelete = { vm.delete(ref); editing = null },
         )
+    }
+}
+
+/** Drafts of [laneIndex]: tasks proposed for that column, and those whose column is gone go to the first open one. */
+private fun laneDrafts(drafts: List<Draft>, board: KanbanBoard, laneIndex: Int, firstOpenLane: Int): List<Draft> =
+    drafts.filter { draft ->
+        val lane = (draft.proposal as ActionProposal.AddTask).lane
+        val target = board.lanes.indexOfFirst { it.title.equals(lane, ignoreCase = true) }.takeIf { it >= 0 } ?: firstOpenLane
+        target == laneIndex
+    }
+
+/**
+ * Position of a card in the board's list, walking the same items the list shows: the quick-add field,
+ * then each column's header and, when unfolded, its drafts and cards (or the empty hint).
+ * [laneInfo] gives a column's folded state and its number of drafts.
+ */
+private fun itemIndexOf(board: KanbanBoard, laneIndex: Int, cardIndex: Int, laneInfo: (Int, KanbanLane) -> Pair<Boolean, Int>): Int {
+    var index = 1
+    board.lanes.forEachIndexed { i, lane ->
+        val (folded, drafts) = laneInfo(i, lane)
+        if (i == laneIndex) return index + 1 + drafts + cardIndex
+        index += 1
+        if (!folded) index += drafts + if (lane.cards.isEmpty() && drafts == 0) 1 else lane.cards.size
+    }
+    return 0
+}
+
+/** A task the chat proposed: dashed until the card is confirmed, a tap shows the card. */
+@Composable
+private fun DraftCardRow(draft: Draft, onClick: () -> Unit) {
+    val p = draft.proposal as ActionProposal.AddTask
+    val color = MaterialTheme.colorScheme.primary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .dashedBorder(color, 12.dp)
+            .clickable(onClick = onClick)
+            .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(p.title, style = MaterialTheme.typography.bodyLarge)
+            val due = p.dueDate?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
+                ?.let { "срок " + Dates.relativeDay(it) + (p.dueTime?.let { time -> ", $time" } ?: "") }
+            Text(
+                listOfNotNull("ждёт подтверждения", due).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = color,
+            )
+        }
     }
 }
 
@@ -444,6 +550,7 @@ private fun CountBadge(count: Int) {
 @Composable
 private fun CardRow(
     card: KanbanCard,
+    highlighted: Boolean,
     next: NextStep?,
     board: KanbanBoard,
     laneIndex: Int,
@@ -459,12 +566,16 @@ private fun CardRow(
     val done = card.checked || lane.isComplete
     var menu by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(12.dp)
+    val background by animateColorAsState(
+        if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest,
+        label = "highlight",
+    )
     Box {
         Row(
             Modifier
                 .fillMaxWidth()
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+                .background(background)
                 .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), shape)
                 .combinedClickable(onClick = onClick, onLongClick = { menu = true })
                 .padding(start = 2.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
@@ -690,3 +801,4 @@ private fun CardSheet(
 }
 
 private const val ARCHIVE_KEY = "\u0000archive"
+private const val HIGHLIGHT_MILLIS = 2500L

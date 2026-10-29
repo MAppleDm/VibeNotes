@@ -20,8 +20,19 @@ import java.io.File
 @Serializable
 enum class ChatRole { USER, ASSISTANT, NOTICE }
 
+/** [REPLACED]: the user corrected the card in a later message and a newer card took its place. */
 @Serializable
-enum class ProposalStatus { PENDING, APPLYING, APPLIED, UNDONE, DISMISSED, FAILED }
+enum class ProposalStatus { PENDING, APPLYING, APPLIED, UNDONE, DISMISSED, FAILED, REPLACED }
+
+/** Cards that still wait for the user; a correction replaces one of them instead of adding a second card. */
+val ProposalStatus.isOpen: Boolean get() = this == ProposalStatus.PENDING || this == ProposalStatus.FAILED
+
+/**
+ * The screen the message was written on: [label] is shown above the message,
+ * [hint] tells the model which day, board or kind of note the message most likely means.
+ */
+@Serializable
+data class ChatFocus(val label: String, val hint: String)
 
 @Serializable
 data class ProposalItem(
@@ -37,6 +48,8 @@ data class ProposalItem(
     val undo: UndoAction? = null,
     /** Why "Отменить" failed; the original action is still applied. */
     val undoError: String? = null,
+    /** The first version of a card that was corrected in later messages; the card shows what changed since. */
+    val original: ActionProposal? = null,
 )
 
 @Serializable
@@ -45,6 +58,8 @@ data class ChatEntry(
     val role: ChatRole,
     val text: String,
     val createdAt: Long,
+    /** User messages: the tab the message was sent from, if it gave the message a context. */
+    val focus: ChatFocus? = null,
     val activities: List<ToolActivity> = emptyList(),
     val proposals: List<ProposalItem> = emptyList(),
     val error: String? = null,
