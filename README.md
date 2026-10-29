@@ -12,9 +12,9 @@ Write “doctor on Thursday morning” and the assistant proposes an event you c
 
 ## Features
 
-- **One inbox:** turn messages into notes, tasks, or calendar proposals; review changes before applying them and undo completed actions.
+- **One inbox, under every tab:** turn messages into notes, tasks, or calendar proposals; review changes before applying them and undo completed actions. A message written on the calendar or a board takes that day or board as its context, and its answer opens right there. A correction such as "no, at 4 pm" updates the card instead of adding a second one.
 - **Markdown notes:** edit and preview, search, tags, folders, checklists, and `[[internal links]]`; the list is grouped by day, week, month, or year like a photo gallery (pinch to zoom) and shows each note's gist plus a few terse facts written by AI (never for notes hidden from AI).
-- **Tasks and calendar overview:** Kanban boards with clear statuses, an Obsidian-compatible archive, undoable deletes, due dates, and a weekly reminder; a week or Google Calendar-style month view of events and tasks that hands planning to the inbox and details to your calendar app.
+- **Tasks and calendar overview:** Kanban boards with clear statuses, an Obsidian-compatible archive, undoable deletes, due dates, and a weekly reminder; a week or Google Calendar-style month view of events and tasks that shows unconfirmed proposals as dashed drafts and hands details to your calendar app.
 - **Android calendar:** use calendars already connected on your phone, including Google calendars, through Android's Calendar Provider.
 - **Your AI provider:** bring a DeepSeek key or configure another OpenAI-compatible endpoint.
 

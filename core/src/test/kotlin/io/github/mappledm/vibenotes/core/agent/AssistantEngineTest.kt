@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -45,6 +46,20 @@ class AssistantEngineTest {
         assertEquals(Role.SYSTEM, request.messages.first().role)
         assertTrue(request.messages.first().content.contains("2026-10-15 Thursday / четверг"))
         assertTrue(request.tools.any { it.name == "create_calendar_event" })
+    }
+
+    @Test
+    fun proposeToolsTakeTheCardTheyCorrect() = runTest {
+        val llm = ScriptedLlm(
+            ScriptedLlm.calls("add_task" to """{"title":"Купить хлеб","replaces_card":"ab12cd34"}"""),
+        )
+        val events = AssistantEngine(llm, registry).run(config, testContext(), emptyList(), "нет, хлеб").toList()
+        assertEquals("ab12cd34", events.filterIsInstance<AssistantEvent.Proposal>().single().replacesCard)
+
+        val tools = llm.requests.single().tools
+        val props = { name: String -> tools.first { it.name == name }.parameters["properties"].toString() }
+        assertTrue(props("add_task").contains("replaces_card"))
+        assertFalse(props("search_notes").contains("replaces_card"))
     }
 
     @Test

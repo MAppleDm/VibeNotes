@@ -2,6 +2,7 @@ package io.github.mappledm.vibenotes.ui.calendar
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,8 +56,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -74,12 +77,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.mappledm.vibenotes.core.agent.ActionProposal
 import io.github.mappledm.vibenotes.core.calendar.CalendarEvent
+import io.github.mappledm.vibenotes.core.inbox.ChatFocus
 import io.github.mappledm.vibenotes.core.kanban.TaskItem
 import io.github.mappledm.vibenotes.data.AndroidCalendarGateway
+import io.github.mappledm.vibenotes.ui.Focus
+import io.github.mappledm.vibenotes.ui.Spot
 import io.github.mappledm.vibenotes.ui.components.Dates
+import io.github.mappledm.vibenotes.ui.components.OnChange
 import io.github.mappledm.vibenotes.ui.components.OnResume
 import io.github.mappledm.vibenotes.ui.components.containerFactory
+import io.github.mappledm.vibenotes.ui.components.dashedBorder
+import io.github.mappledm.vibenotes.ui.inbox.CardText
+import io.github.mappledm.vibenotes.ui.inbox.Draft
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -94,12 +106,50 @@ import java.time.temporal.ChronoUnit
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CalendarScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, onOpenInbox: () -> Unit) {
+fun CalendarScreen(
+    onOpenSettings: () -> Unit,
+    onOpenTask: (TaskItem) -> Unit,
+    onPlan: (LocalDate) -> Unit,
+    onFocus: (ChatFocus?) -> Unit,
+    drafts: List<Draft>,
+    onShowDraft: (String) -> Unit,
+    spot: Spot.Day?,
+    onSpotShown: () -> Unit,
+    chatChanges: Any?,
+) {
     val vm: CalendarViewModel = viewModel(factory = containerFactory { CalendarViewModel(it) })
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { vm.refresh() }
     val today = LocalDate.now()
+    var highlight by remember { mutableStateOf<Long?>(null) }
+    var jumpTo by remember { mutableStateOf<LocalDate?>(null) }
+
+    // "Открыть" on a card: the event's day, scrolled into view, the event highlighted for a moment.
+    LaunchedEffect(spot) {
+        val target = spot ?: return@LaunchedEffect
+        vm.show(target.date)
+        jumpTo = target.date
+        highlight = target.eventId
+        onSpotShown()
+    }
+    LaunchedEffect(highlight) {
+        if (highlight != null) {
+            delay(HIGHLIGHT_MILLIS)
+            highlight = null
+        }
+    }
+    // A message written here is about the day or the week on screen; today and this week need no hint.
+    LaunchedEffect(state.mode, state.weekStart, state.selected) {
+        val now = LocalDate.now()
+        onFocus(
+            when {
+                state.mode == CalendarMode.MONTH && state.selected != now -> Focus.day(state.selected)
+                state.mode == CalendarMode.WEEK && state.weekStart != CalendarRange.mondayOf(now) -> Focus.week(state.weekStart)
+                else -> null
+            },
+        )
+    }
 
     fun openCalendar(date: LocalDate) {
         val millis = date.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -107,15 +157,31 @@ fun CalendarScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, on
     }
 
     val actions = DayActions(
-        onPlan = { date -> vm.planFor(date); onOpenInbox() },
+        onPlan = onPlan,
         onOpenEvent = { event -> runCatching { context.startActivity(AndroidCalendarGateway.viewTimeIntent(event.start.toEpochMilli())) } },
         onCheck = vm::complete,
-        onOpenBoard = onOpenBoard,
+        onOpenTask = onOpenTask,
         onAllowCalendar = { permissionLauncher.launch(AndroidCalendarGateway.PERMISSIONS) },
         onOpenCalendar = ::openCalendar,
+        drafts = remember(drafts) { drafts.groupBy { CardText.day(it.proposal) } },
+        onShowDraft = onShowDraft,
+        highlight = highlight,
     )
 
+    // Moving to another week or month is the user's own choice: forget the day "Открыть" led to.
+    fun shift(steps: Long) {
+        jumpTo = null
+        vm.shift(steps)
+    }
+
+    fun showToday() {
+        jumpTo = null
+        vm.today()
+    }
+
     OnResume { vm.refresh() }
+    // A card confirmed or undone in the answer panel changes what this tab shows.
+    OnChange(chatChanges) { vm.refresh() }
 
     Scaffold(
         topBar = {
@@ -132,11 +198,11 @@ fun CalendarScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, on
                 },
                 actions = {
                     val week = state.mode == CalendarMode.WEEK
-                    TodayButton(today, onClick = vm::today)
-                    IconButton(onClick = { vm.shift(-1) }) {
+                    TodayButton(today, onClick = ::showToday)
+                    IconButton(onClick = { shift(-1) }) {
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, if (week) "Предыдущая неделя" else "Предыдущий месяц")
                     }
-                    IconButton(onClick = { vm.shift(1) }) {
+                    IconButton(onClick = { shift(1) }) {
                         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, if (week) "Следующая неделя" else "Следующий месяц")
                     }
                     IconButton(onClick = onOpenSettings) { Icon(Icons.Outlined.Settings, "Настройки") }
@@ -147,7 +213,7 @@ fun CalendarScreen(onOpenSettings: () -> Unit, onOpenBoard: (String) -> Unit, on
         Column(Modifier.fillMaxSize().padding(top = padding.calculateTopPadding())) {
             ModeSwitch(state.mode, vm::setMode)
             when (state.mode) {
-                CalendarMode.WEEK -> WeekView(state, today, actions)
+                CalendarMode.WEEK -> WeekView(state, today, actions, jumpTo)
                 CalendarMode.MONTH -> MonthView(state, today, actions, onSelect = vm::select)
             }
         }
@@ -159,9 +225,14 @@ private class DayActions(
     val onPlan: (LocalDate) -> Unit,
     val onOpenEvent: (CalendarEvent) -> Unit,
     val onCheck: (TaskItem) -> Unit,
-    val onOpenBoard: (String) -> Unit,
+    val onOpenTask: (TaskItem) -> Unit,
     val onAllowCalendar: () -> Unit,
     val onOpenCalendar: (LocalDate) -> Unit,
+    /** Cards waiting in the chat, by the day they would land on. */
+    val drafts: Map<LocalDate?, List<Draft>>,
+    val onShowDraft: (String) -> Unit,
+    /** The event "Открыть" led to, highlighted for a moment. */
+    val highlight: Long?,
 )
 
 /** Google Calendar's "today" button: a small page with today's date on it. */
@@ -207,7 +278,7 @@ private fun ModeSwitch(mode: CalendarMode, onMode: (CalendarMode) -> Unit) {
 // --- week -----------------------------------------------------------------------------------
 
 @Composable
-private fun WeekView(state: CalendarUiState, today: LocalDate, actions: DayActions) {
+private fun WeekView(state: CalendarUiState, today: LocalDate, actions: DayActions, jumpTo: LocalDate?) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val rows = remember(state, today) { weekRows(state, today) }
@@ -219,6 +290,13 @@ private fun WeekView(state: CalendarUiState, today: LocalDate, actions: DayActio
             rows.indexOfFirst { it is WeekRow.Overdue || (it is WeekRow.Day && it.day.date == today) }
         } else 0
         listState.scrollToItem(target.coerceAtLeast(0))
+    }
+    // Declared after the default scroll, so on the same load the day "Открыть" led to wins.
+    LaunchedEffect(state.loaded, jumpTo) {
+        val date = jumpTo ?: return@LaunchedEffect
+        if (state.loaded?.takeIf { it.mode == CalendarMode.WEEK }?.contains(date) != true) return@LaunchedEffect
+        val index = rows.indexOfFirst { it is WeekRow.Day && it.day.date == date }
+        if (index >= 0) listState.animateScrollToItem(index)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -241,7 +319,7 @@ private fun WeekView(state: CalendarUiState, today: LocalDate, actions: DayActio
                     is WeekRow.Overdue -> OverdueCard(row.tasks, actions)
                     is WeekRow.Day -> DayBlock(row.day, today, actions)
                     is WeekRow.Footer -> Footer(
-                        emptyHint = if (row.weekIsEmpty) "Неделя свободна. Напишите во «Входящие», например «в четверг в 15:00 стоматолог», — и событие появится здесь." else null,
+                        emptyHint = if (row.weekIsEmpty) "Неделя свободна. Напишите внизу, например «в четверг в 15:00 стоматолог», — и событие появится здесь." else null,
                     ) {
                         actions.onOpenCalendar(if (today in state.range) today else state.weekStart)
                     }
@@ -506,8 +584,9 @@ private fun DayBlock(day: DayAgenda, today: LocalDate, actions: DayActions, comp
     val isToday = day.date == today
     val past = day.date.isBefore(today)
     val onPlan = { actions.onPlan(day.date) }.takeUnless { past }
+    val drafts = actions.drafts[day.date].orEmpty()
     // A free day is a single line, so a quiet week stays short and still shows every day.
-    if (day.isEmpty && !isToday && compactWhenFree) {
+    if (day.isEmpty && drafts.isEmpty() && !isToday && compactWhenFree) {
         DayHeader(day.date, isToday = false, note = "свободно", onPlan = onPlan, modifier = Modifier.alpha(if (past) PAST_ALPHA else 1f))
         return
     }
@@ -525,9 +604,10 @@ private fun DayBlock(day: DayAgenda, today: LocalDate, actions: DayActions, comp
             .padding(bottom = 8.dp),
     ) {
         DayHeader(day.date, isToday, note = null, onPlan = onPlan)
-        if (day.isEmpty) {
+        drafts.forEach { draft -> DraftEntry(draft) { actions.onShowDraft(draft.entryId) } }
+        if (day.isEmpty && drafts.isEmpty()) {
             Text(
-                if (past) "Ничего не было запланировано." else "Свободный день. Нажмите +, чтобы записать план во «Входящие».",
+                if (past) "Ничего не было запланировано." else "Свободный день. Нажмите +, чтобы записать план.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp),
@@ -545,12 +625,14 @@ private fun DayBlock(day: DayAgenda, today: LocalDate, actions: DayActions, comp
         val now = Instant.now()
         day.timed.forEach { entry ->
             when (entry) {
-                is TimedEntry.Event -> EventEntry(entry, now, dimFinished = isToday) { actions.onOpenEvent(entry.event) }
-                is TimedEntry.Task -> TaskEntry(entry.task, Dates.timeOf(entry.time), onCheck = { actions.onCheck(entry.task) }, onOpen = { actions.onOpenBoard(entry.task.boardPath) })
+                is TimedEntry.Event -> EventEntry(entry, now, dimFinished = isToday, highlighted = entry.event.eventId == actions.highlight) {
+                    actions.onOpenEvent(entry.event)
+                }
+                is TimedEntry.Task -> TaskEntry(entry.task, Dates.timeOf(entry.time), onCheck = { actions.onCheck(entry.task) }, onOpen = { actions.onOpenTask(entry.task) })
             }
         }
         day.tasks.forEach { task ->
-            TaskEntry(task, null, onCheck = { actions.onCheck(task) }, onOpen = { actions.onOpenBoard(task.boardPath) })
+            TaskEntry(task, null, onCheck = { actions.onCheck(task) }, onOpen = { actions.onOpenTask(task) })
         }
     }
 }
@@ -611,7 +693,7 @@ private fun AllDayChip(event: CalendarEvent, onClick: () -> Unit) {
 }
 
 @Composable
-private fun EventEntry(entry: TimedEntry.Event, now: Instant, dimFinished: Boolean, onClick: () -> Unit) {
+private fun EventEntry(entry: TimedEntry.Event, now: Instant, dimFinished: Boolean, highlighted: Boolean = false, onClick: () -> Unit) {
     val event = entry.event
     val ongoing = !now.isBefore(event.start) && now.isBefore(event.end)
     val finished = dimFinished && !event.end.isAfter(now)
@@ -620,10 +702,12 @@ private fun EventEntry(entry: TimedEntry.Event, now: Instant, dimFinished: Boole
         entry.endsAfter -> Dates.time(event.start) to "→ " + Dates.weekdayShort(event.end.atZone(ZoneId.systemDefault()).toLocalDate())
         else -> Dates.time(event.start) to Dates.time(event.end)
     }
+    val glow by animateColorAsState(if (highlighted) MaterialTheme.colorScheme.primaryContainer else Color.Transparent, label = "highlight")
     Row(
         Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
+            .background(glow)
             .clickable(onClick = onClick)
             .alpha(if (finished) FINISHED_ALPHA else 1f)
             .padding(start = 14.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
@@ -643,6 +727,41 @@ private fun EventEntry(entry: TimedEntry.Event, now: Instant, dimFinished: Boole
             event.location?.takeIf { it.isNotBlank() }?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
+        }
+    }
+}
+
+/** A card still waiting in the chat: dashed, because nothing is in the calendar or on the board yet. */
+@Composable
+private fun DraftEntry(draft: Draft, onClick: () -> Unit) {
+    val p = draft.proposal
+    val (top, bottom) = when (p) {
+        is ActionProposal.CreateEvent -> if (p.allDay) "весь" to "день" else (p.startTime ?: "") to p.endTime
+        is ActionProposal.UpdateEvent -> if (p.after.allDay) "весь" to "день" else (p.after.startTime ?: "") to p.after.endTime
+        is ActionProposal.AddTask -> (p.dueTime ?: "") to null
+        else -> "" to null
+    }
+    val kind = when (p) {
+        is ActionProposal.UpdateEvent -> "перенос"
+        is ActionProposal.AddTask -> "задача"
+        else -> "событие"
+    }
+    val color = MaterialTheme.colorScheme.primary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp, vertical = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .dashedBorder(color)
+            .clickable(onClick = onClick)
+            .padding(start = 6.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TimeLabel(top, bottom, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(MARKER_WIDTH - 8.dp))
+        Column(Modifier.weight(1f).padding(start = 8.dp)) {
+            Text(CardText.title(p), style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("$kind · ждёт подтверждения", style = MaterialTheme.typography.bodySmall, color = color)
         }
     }
 }
@@ -713,7 +832,7 @@ private fun OverdueCard(tasks: List<TaskItem>, actions: DayActions) {
                 task,
                 time = task.card.dueDate?.let { Dates.dayMonth(it) },
                 onCheck = { actions.onCheck(task) },
-                onOpen = { actions.onOpenBoard(task.boardPath) },
+                onOpen = { actions.onOpenTask(task) },
                 timeColor = MaterialTheme.colorScheme.error,
             )
         }
@@ -804,6 +923,7 @@ private fun plural(n: Long, one: String, few: String, many: String): String = wh
 }
 
 private const val PAST_ALPHA = 0.6f
+private const val HIGHLIGHT_MILLIS = 2500L
 private const val FINISHED_ALPHA = 0.55f
 private const val OTHER_MONTH_ALPHA = 0.4f
 private const val MONTH_CELL_LINES = 3

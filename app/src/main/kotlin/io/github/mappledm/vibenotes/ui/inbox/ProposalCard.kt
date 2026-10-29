@@ -1,8 +1,12 @@
 package io.github.mappledm.vibenotes.ui.inbox
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +17,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
 import androidx.compose.material.icons.automirrored.outlined.NoteAdd
+import androidx.compose.material.icons.automirrored.outlined.Undo
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Event
 import androidx.compose.material.icons.outlined.Notifications
@@ -24,17 +32,23 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.mappledm.vibenotes.core.agent.ActionProposal
 import io.github.mappledm.vibenotes.core.agent.EventSnapshot
-import io.github.mappledm.vibenotes.core.agent.ResultTarget
 import io.github.mappledm.vibenotes.core.agent.TaskSnapshot
 import io.github.mappledm.vibenotes.core.calendar.CalendarInfo
 import io.github.mappledm.vibenotes.core.inbox.ProposalItem
@@ -68,17 +82,30 @@ fun ProposalCard(
     modifier: Modifier = Modifier,
 ) {
     val p = item.proposal
-    val dimmed = item.status == ProposalStatus.DISMISSED
+    // A finished card folds into one line, so the chat stays readable after a few corrections; a tap unfolds it.
+    val settled = item.status.isSettled
+    var expanded by rememberSaveable(item.id) { mutableStateOf(false) }
+    if (settled && !expanded) {
+        Receipt(item, onExpand = { expanded = true }, onOpen = onOpen, onUndo = onUndo, modifier = modifier)
+        return
+    }
+    val dimmed = item.status != ProposalStatus.APPLIED && settled
     OutlinedCard(
         modifier = modifier.fillMaxWidth(),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = if (settled) Modifier.fillMaxWidth().clickable { expanded = false } else Modifier,
+            ) {
                 Icon(iconFor(p), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.width(8.dp))
-                Text(kindLabel(p), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text(kindLabel(p), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                if (settled) Icon(Icons.Filled.ExpandLess, "Свернуть", Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            val original = item.original
+            if (original != null && !settled) Changes(CardText.changes(original, p))
             val contentColor = if (dimmed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
             when (p) {
                 is ActionProposal.CreateEvent -> EventDetails(
@@ -230,7 +257,7 @@ private fun Footer(
                     }
                 }
                 if (item.target != null) {
-                    TextButton(onClick = onOpen) { Text(if (item.target is ResultTarget.Event) "В календаре" else "Открыть") }
+                    TextButton(onClick = onOpen) { Text("Открыть") }
                 }
             }
             if (item.undo != null) {
@@ -244,7 +271,8 @@ private fun Footer(
             Spacer(Modifier.width(8.dp))
             Text(item.resultMessage ?: "Отменено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        ProposalStatus.DISMISSED -> Text("Отменено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ProposalStatus.DISMISSED -> Text("Отклонено", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ProposalStatus.REPLACED -> Text(REPLACED_TEXT, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         ProposalStatus.FAILED -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.ErrorOutline, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
@@ -266,6 +294,77 @@ private fun Footer(
                     Button(onClick = onConfirm, enabled = !needsCalendarChoice) { Text("Повторить") }
                 }
             }
+        }
+    }
+}
+
+private const val REPLACED_TEXT = "Заменено исправленной карточкой"
+
+/** Done, taken back, declined or corrected: nothing left to decide, so one line is enough. */
+private val ProposalStatus.isSettled: Boolean
+    get() = this == ProposalStatus.APPLIED || this == ProposalStatus.UNDONE ||
+        this == ProposalStatus.DISMISSED || this == ProposalStatus.REPLACED
+
+@Composable
+private fun Receipt(item: ProposalItem, onExpand: () -> Unit, onOpen: () -> Unit, onUndo: () -> Unit, modifier: Modifier) {
+    val applied = item.status == ProposalStatus.APPLIED
+    val variant = MaterialTheme.colorScheme.onSurfaceVariant
+    val (icon, tint) = when (item.status) {
+        ProposalStatus.APPLIED -> Icons.Outlined.CheckCircle to LocalExtraColors.current.success
+        ProposalStatus.UNDONE -> Icons.AutoMirrored.Outlined.Undo to variant
+        ProposalStatus.REPLACED -> Icons.Outlined.EditNote to variant
+        else -> Icons.Outlined.Close to variant
+    }
+    val status = when (item.status) {
+        ProposalStatus.APPLIED -> (item.resultMessage ?: "Готово") + if (item.autoApplied) " · без подтверждения" else ""
+        ProposalStatus.UNDONE -> "Отменено"
+        ProposalStatus.REPLACED -> REPLACED_TEXT
+        else -> "Отклонено"
+    }
+    Surface(
+        onClick = onExpand,
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(icon, null, Modifier.size(18.dp), tint = tint)
+            Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                Text(
+                    CardText.subject(item.proposal),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (applied) MaterialTheme.colorScheme.onSurface else variant,
+                    textDecoration = if (item.status == ProposalStatus.REPLACED || item.status == ProposalStatus.DISMISSED) TextDecoration.LineThrough else null,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(status, style = MaterialTheme.typography.labelSmall, color = variant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                item.undoError?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error) }
+            }
+            val compact = PaddingValues(horizontal = 8.dp)
+            if (applied && item.target != null) TextButton(onClick = onOpen, contentPadding = compact) { Text("Открыть") }
+            if (applied && item.undo != null) TextButton(onClick = onUndo, contentPadding = compact) { Text("Отменить") }
+        }
+    }
+}
+
+/** "Исправлено: 15:00 → 16:00 · 1 ч → 30 мин" on a card that replaced an earlier version. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun Changes(changes: List<String>) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("Исправлено:", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(vertical = 3.dp))
+        changes.forEach { change ->
+            Text(
+                change,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .background(MaterialTheme.colorScheme.secondaryContainer)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
         }
     }
 }
